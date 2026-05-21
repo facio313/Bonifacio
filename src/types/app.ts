@@ -6,4 +6,5 @@ export interface App {
   tags: string[]
   color: string
   icon: string
+  href?: string
 }

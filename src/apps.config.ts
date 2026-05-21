@@ -6,6 +6,7 @@ export const apps: App[] = [
     title: '앱 이름',
     description: '한줄 설명',
     port: 3000,
+    href: '/pilgrimage',
     tags: ['React', 'TypeScript'],
     color: '#6366f1',
     icon: '🚀',

@@ -42,15 +42,27 @@ export default function AppCard({ app }: Props) {
         ))}
       </div>
 
-      <motion.button
-        whileHover={{ scale: 1.02 }}
-        whileTap={{ scale: 0.97 }}
-        onClick={() => openApp(app)}
-        className="mt-auto w-full py-2.5 rounded-xl text-sm font-semibold text-white cursor-pointer"
-        style={{ backgroundColor: app.color }}
-      >
-        열기
-      </motion.button>
+      {app.href ? (
+        <motion.a
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.97 }}
+          href={app.href}
+          className="mt-auto w-full py-2.5 rounded-xl text-sm font-semibold text-white cursor-pointer text-center"
+          style={{ backgroundColor: app.color }}
+        >
+          열기
+        </motion.a>
+      ) : (
+        <motion.button
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.97 }}
+          onClick={() => openApp(app)}
+          className="mt-auto w-full py-2.5 rounded-xl text-sm font-semibold text-white cursor-pointer"
+          style={{ backgroundColor: app.color }}
+        >
+          열기
+        </motion.button>
+      )}
     </motion.div>
   )
 }
