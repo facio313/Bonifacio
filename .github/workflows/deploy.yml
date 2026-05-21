@@ -1,0 +1,56 @@
+# GitHub Secrets 설정 방법:
+#   레포 → Settings → Secrets and variables → Actions → New repository secret
+#
+#   DEPLOY_HOST  서버 IP 또는 도메인 (예: 123.456.789.0)
+#   DEPLOY_USER  SSH 접속 유저명 (cks)
+#   DEPLOY_KEY   SSH Private Key 전체 내용
+#                생성: ssh-keygen -t ed25519 -C "github-actions-bonifacio"
+#                서버: ~/.ssh/authorized_keys 에 공개키(.pub) 추가
+#                시크릿: 개인키(id_ed25519) 내용 전체 붙여넣기 (-----BEGIN 포함)
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy to server via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_KEY }}
+          script: |
+            set -e
+
+            DEPLOY_DIR="/home/cks/Bonifacio"
+            REPO_URL="https://github.com/facio313/Bonifacio.git"
+
+            # 1. git clone / pull
+            if [ ! -d "$DEPLOY_DIR/.git" ]; then
+              rm -rf "$DEPLOY_DIR"
+              git clone "$REPO_URL" "$DEPLOY_DIR"
+            else
+              git -C "$DEPLOY_DIR" pull origin main
+            fi
+
+            # 2. docker-compose.yml 없으면 생성 (레포에 포함된 경우 스킵)
+            if [ ! -f "$DEPLOY_DIR/docker-compose.yml" ]; then
+              printf '%s\n' \
+                'services:' \
+                '  bonifacio:' \
+                '    build: .' \
+                '    container_name: bonifacio' \
+                '    restart: unless-stopped' \
+                '    ports:' \
+                '      - "127.0.0.1:5173:80"' \
+                > "$DEPLOY_DIR/docker-compose.yml"
+            fi
+
+            # 3. 빌드 및 컨테이너 재시작
+            docker compose -f "$DEPLOY_DIR/docker-compose.yml" up --build -d

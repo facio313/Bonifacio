@@ -1,0 +1,13 @@
+import type { App } from './types/app'
+
+export const apps: App[] = [
+  {
+    id: 'app1',
+    title: '앱 이름',
+    description: '한줄 설명',
+    port: 3000,
+    tags: ['React', 'TypeScript'],
+    color: '#6366f1',
+    icon: '🚀',
+  },
+]
