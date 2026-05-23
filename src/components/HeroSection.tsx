@@ -9,8 +9,8 @@ export default function HeroSection() {
         transition={{ duration: 0.5 }}
         className="flex flex-col items-center gap-4"
       >
-        <div className="w-24 h-24 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white text-3xl font-bold shadow-lg select-none">
-          CK
+        <div className="w-24 h-24 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white text-2xl font-bold shadow-lg select-none">
+          CKS
         </div>
         <h1 className="text-4xl font-bold tracking-tight">Bonifacio</h1>
         <p className="text-gray-500 dark:text-gray-400 text-center max-w-sm text-lg">
