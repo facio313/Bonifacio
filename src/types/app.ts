@@ -1,10 +1,14 @@
+export type AppStatus = 'live' | 'beta' | 'wip'
+
 export interface App {
   id: string
   title: string
   description: string
-  port: number
   tags: string[]
   color: string
   icon: string
-  href?: string
+  status: AppStatus
+  /** Canonical production URL. Internal paths always include a trailing slash. */
+  href: string
+  external?: boolean
 }

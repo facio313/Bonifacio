@@ -3,11 +3,8 @@ import { useState } from 'react'
 import { Reveal, Arrow, useReveal } from '../atoms'
 import { SectionRail, BigNumber } from '../Nav'
 import { CardVisual } from '../CardVisual'
-import { projects } from '../../data/projects'
-import type { Project, ProjectStatus, ProjectSpan } from '../../data/projects'
 import { apps } from '../../apps.config'
-import type { App } from '../../types/app'
-import { useStore } from '../../store/useStore'
+import type { App, AppStatus } from '../../types/app'
 import { ACCENT } from '../../site'
 
 interface WorkCard {
@@ -17,26 +14,13 @@ interface WorkCard {
   tag: string
   desc: string
   stack: string[]
-  status: ProjectStatus
-  span?: ProjectSpan
+  status: AppStatus
+  span?: 'hero' | 'wide'
   kind?: string // bespoke visual key
-  href?: string
-  app?: App // real, openable app
+  href: string
+  external?: boolean
   fallback?: { icon?: string; label?: string; color?: string }
 }
-
-const fromProject = (p: Project): WorkCard => ({
-  id: p.id,
-  num: p.num,
-  name: p.name,
-  tag: p.tag,
-  desc: p.desc,
-  stack: p.stack,
-  status: p.status,
-  span: p.span,
-  kind: p.id,
-  href: p.href,
-})
 
 const fromApp = (app: App, num: string): WorkCard => ({
   id: app.id,
@@ -45,9 +29,9 @@ const fromApp = (app: App, num: string): WorkCard => ({
   tag: app.tags[0] ?? 'App',
   desc: app.description,
   stack: app.tags,
-  status: 'live',
+  status: app.status,
   href: app.href,
-  app,
+  external: app.external,
   fallback: { icon: app.icon, label: app.title, color: app.color },
 })
 
@@ -60,14 +44,13 @@ const buildCards = (): WorkCard[] => {
 
   const cards: WorkCard[] = []
   if (heroApp) cards.push({ ...fromApp(heroApp, '01'), span: 'hero', kind: 'pilgrimage' })
-  cards.push(...projects.map(fromProject))
   otherApps.forEach((app, i) =>
-    cards.push(fromApp(app, String(projects.length + 2 + i).padStart(2, '0'))),
+    cards.push(fromApp(app, String(2 + i).padStart(2, '0'))),
   )
   return cards
 }
 
-const statusBadge = (s: ProjectStatus) => {
+const statusBadge = (s: AppStatus) => {
   if (s === 'live') return { label: 'Live', dot: 'var(--accent)', color: 'var(--ink)' }
   if (s === 'beta') return { label: 'Beta', dot: '#c9a227', color: 'var(--ink)' }
   return { label: 'In progress', dot: 'var(--muted)', color: 'var(--muted)' }
@@ -76,14 +59,10 @@ const statusBadge = (s: ProjectStatus) => {
 const ProjectCard = ({ card, accent }: { card: WorkCard; accent: string }) => {
   const [hover, setHover] = useState(false)
   const ref = useReveal()
-  const { openApp } = useStore()
   const s = statusBadge(card.status)
   const isHero = card.span === 'hero'
   const isWide = card.span === 'wide'
   const minH = isHero ? 640 : 400
-
-  // Real app with no href → open in iframe via the store. Otherwise it's a link.
-  const opensInApp = !!card.app && !card.href
 
   const cardStyle = {
     position: 'relative',
@@ -285,7 +264,7 @@ const ProjectCard = ({ card, accent }: { card: WorkCard; accent: string }) => {
               transition: 'color 0.3s',
             }}
           >
-            Open
+            {card.status === 'wip' ? 'Coming soon' : 'Open'}
             <span
               style={{
                 display: 'inline-block',
@@ -306,23 +285,16 @@ const ProjectCard = ({ card, accent }: { card: WorkCard; accent: string }) => {
     onMouseLeave: () => setHover(false),
   }
 
-  if (opensInApp) {
-    return (
-      <button
-        ref={ref as React.Ref<HTMLButtonElement>}
-        type="button"
-        className={className}
-        style={cardStyle}
-        onClick={() => openApp(card.app!)}
-        {...handlers}
-      >
-        {inner}
-      </button>
-    )
-  }
-
   return (
-    <a ref={ref as React.Ref<HTMLAnchorElement>} href={card.href || '#'} className={className} style={cardStyle} {...handlers}>
+    <a
+      ref={ref as React.Ref<HTMLAnchorElement>}
+      href={card.href}
+      target={card.external ? '_blank' : undefined}
+      rel={card.external ? 'noopener noreferrer' : undefined}
+      className={className}
+      style={cardStyle}
+      {...handlers}
+    >
       {inner}
     </a>
   )

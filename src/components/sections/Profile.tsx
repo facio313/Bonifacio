@@ -4,7 +4,6 @@ import type { MouseEvent } from 'react'
 import { Reveal, Arrow, LiveDot } from '../atoms'
 import { SectionRail } from '../Nav'
 import { CardVisual } from '../CardVisual'
-import { projects } from '../../data/projects'
 import { apps } from '../../apps.config'
 import { ACCENT, BIO_LINE } from '../../site'
 
@@ -13,12 +12,13 @@ const scrollTo = (id: string) => (e: MouseEvent) => {
   document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
-// Works preview shown under the hero CTAs: real apps first, then showcase projects.
+// Works preview shown under the hero CTAs.
 // `id` doubles as the CardVisual key, so Pilgrimage gets its bespoke route visual.
-const previewList = [
-  ...apps.map((app) => ({ id: app.id, num: '01', name: app.title })),
-  ...projects.map((p) => ({ id: p.id, num: p.num, name: p.name })),
-].slice(0, 8)
+const previewList = apps.map((app, index) => ({
+  id: app.id,
+  num: String(index + 1).padStart(2, '0'),
+  name: app.title,
+}))
 
 export const Profile = () => {
   // mouse-tracked subtle parallax
