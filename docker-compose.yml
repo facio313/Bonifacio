@@ -1,6 +1,8 @@
 services:
   bonifacio:
-    build: .
+    image: ${BONIFACIO_IMAGE:-ghcr.io/facio313/bonifacio:latest}
+    build:
+      context: .
     container_name: bonifacio
     restart: unless-stopped
     ports:
