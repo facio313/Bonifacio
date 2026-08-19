@@ -74,9 +74,14 @@ export const Profile = () => {
         >
           최경수<span style={{ color: 'var(--accent)' }}>.</span>
         </span>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
-          <LiveDot /> Available for work · 2026
-        </span>
+        <div className="intro-utility-actions">
+          <span className="intro-availability">
+            <LiveDot /> Available for work · 2026
+          </span>
+          <a className="monitor-link" href="/monitor/" aria-label="서버 모니터 열기">
+            Monitor <Arrow size={10} rotate={-45} />
+          </a>
+        </div>
       </div>
 
       <div
