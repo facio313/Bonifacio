@@ -19,6 +19,7 @@ class PortfolioSsoContractTests(unittest.TestCase):
         admin = compose.split("  bonifacioSsoAdmin:\n", 1)[1].split(
             "\n  bonifacio:\n", 1
         )[0]
+        landing = compose.split("\n  bonifacio:\n", 1)[1]
 
         self.assertIn("127.0.0.1:${BONIFACIO_SSO_PORT:-9091}:9091", authelia)
         self.assertNotIn("ports:", redis)
@@ -40,6 +41,8 @@ class PortfolioSsoContractTests(unittest.TestCase):
         self.assertIn('user: "0:0"', admin)
         self.assertIn("read_only: true", admin)
         self.assertIn("cap_drop:\n      - ALL", admin)
+        self.assertIn("fetch('http://127.0.0.1:80/')", landing)
+        self.assertNotIn("wget", landing)
         self.assertIn(
             "authelia/authelia:4.39.20@sha256:"
             "68277b28658a69bb3f512c2c23c41c7df7d9311d0e506e64e26c96dcd75d0539",
