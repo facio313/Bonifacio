@@ -54,6 +54,7 @@ def write_database(
         f"    email: {yaml_string(email)}\n"
         "    groups:\n"
         "      - owners\n"
+        "      - users\n"
     )
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:

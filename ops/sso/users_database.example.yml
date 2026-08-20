@@ -7,3 +7,4 @@ users:
     email: owner@bonifacio.work
     groups:
       - owners
+      - users

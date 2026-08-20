@@ -21,7 +21,9 @@ jobs:
   build-and-deploy:
     name: Build ARM64 image and deploy
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
+    # The restricted host may wait up to 20 minutes for the fleet-wide deploy
+    # lock, then pulls and verifies two services. Do not interrupt it mid-cutover.
+    timeout-minutes: 60
 
     steps:
       - name: Check out source
@@ -38,15 +40,24 @@ jobs:
           set -Eeuo pipefail
           npm ci
           npm run build
+          npm run test:sso-admin
+          npm audit --omit=dev --audit-level=high
           python3 -m unittest discover -s ops/sso -p 'test_*.py'
           docker compose config --quiet
           docker run --rm \
             -e AUTHELIA_SESSION_SECRET='ci-session-secret-with-at-least-sixty-four-characters-000000000000' \
             -e AUTHELIA_STORAGE_ENCRYPTION_KEY='ci-storage-key-with-at-least-sixty-four-characters-00000000000000' \
             -v "$PWD/ops/sso/configuration.yml:/config/configuration.yml:ro" \
-            -v "$PWD/ops/sso/users_database.example.yml:/config/users_database.yml:ro" \
+            -v "$PWD/ops/sso/users_database.example.yml:/config/users/users_database.yml:ro" \
             authelia/authelia:4.39.20@sha256:68277b28658a69bb3f512c2c23c41c7df7d9311d0e506e64e26c96dcd75d0539 \
             authelia config validate --config /config/configuration.yml
+          hash_output=$(docker run --rm \
+            authelia/authelia:4.39.20@sha256:68277b28658a69bb3f512c2c23c41c7df7d9311d0e506e64e26c96dcd75d0539 \
+            authelia crypto hash generate argon2 \
+              --random --random.length 24 --random.charset rfc3986)
+          [[ $hash_output == *'Random Password: '* ]]
+          [[ $hash_output == *'Digest: $argon2id$'* ]]
+          unset hash_output
 
       - name: Sign in to GitHub Container Registry
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3

@@ -13,13 +13,33 @@ class PortfolioSsoContractTests(unittest.TestCase):
         redis = compose.split("  bonifacioSsoRedis:\n", 1)[1].split(
             "\n  bonifacioSso:\n", 1
         )[0]
-        authelia = compose.split("  bonifacioSso:\n", 1)[1].split("\n  bonifacio:\n", 1)[0]
+        authelia = compose.split("  bonifacioSso:\n", 1)[1].split(
+            "\n  bonifacioSsoAdmin:\n", 1
+        )[0]
+        admin = compose.split("  bonifacioSsoAdmin:\n", 1)[1].split(
+            "\n  bonifacio:\n", 1
+        )[0]
 
         self.assertIn("127.0.0.1:${BONIFACIO_SSO_PORT:-9091}:9091", authelia)
         self.assertNotIn("ports:", redis)
         self.assertIn("bonifacio_sso_data:/data", authelia)
         self.assertIn("bonifacio_sso_redis_data:/data", redis)
         self.assertIn("cap_drop:\n      - ALL", authelia)
+        self.assertNotIn("cap_add:", authelia)
+        self.assertIn("read_only: true", authelia)
+        self.assertIn('entrypoint: ["/app/authelia"]', authelia)
+        self.assertIn('user: "0:0"', authelia)
+        self.assertIn("http://127.0.0.1:9091/sso/api/health", authelia)
+        self.assertIn("target: /config/users", authelia)
+        self.assertIn("read_only: true", authelia.split("target: /config/users", 1)[1])
+        self.assertIn("127.0.0.1:${BONIFACIO_SSO_ADMIN_PORT:-9092}:9092", admin)
+        self.assertIn("USERS_DATABASE_PATH: /data/users/current/users_database.yml", admin)
+        self.assertIn("target: /data/users", admin)
+        self.assertIn("ADMIN_EDGE_SECRET_FILE: /run/secrets/bonifacio_sso_admin_edge_secret", admin)
+        self.assertIn("bonifacio_sso_admin_edge_secret", admin)
+        self.assertIn('user: "0:0"', admin)
+        self.assertIn("read_only: true", admin)
+        self.assertIn("cap_drop:\n      - ALL", admin)
         self.assertIn(
             "authelia/authelia:4.39.20@sha256:"
             "68277b28658a69bb3f512c2c23c41c7df7d9311d0e506e64e26c96dcd75d0539",
@@ -35,13 +55,38 @@ class PortfolioSsoContractTests(unittest.TestCase):
         location = (ROOT / "ops/sso/nginx/authelia-location.conf").read_text(encoding="utf-8")
         auth = (ROOT / "ops/sso/nginx/authelia-authrequest.conf").read_text(encoding="utf-8")
         portal = (ROOT / "ops/sso/nginx/authelia-portal.conf").read_text(encoding="utf-8")
+        admin = (ROOT / "ops/sso/nginx/sso-admin.conf").read_text(encoding="utf-8")
 
         self.assertIn("location = /internal/authelia/authz", location)
         self.assertIn("internal;", location)
         self.assertIn("location ^~ /sso/", portal)
+        self.assertIn("location ^~ /sso/admin/", admin)
+        self.assertIn("include /etc/nginx/snippets/bonifacio-sso-authrequest.conf;", admin)
+        self.assertIn("include /etc/nginx/snippets/bonifacio-sso-admin-edge-secret.conf;", admin)
+        self.assertIn("proxy_pass http://127.0.0.1:9092;", admin)
         self.assertIn("auth_request /internal/authelia/authz;", auth)
         for header in ("Remote-User", "Remote-Email", "Remote-Name", "Remote-Groups"):
             self.assertIn(f"proxy_set_header {header} $bonifacio_sso_", auth)
+
+    def test_admin_acl_precedes_general_access_and_password_change_is_local(self) -> None:
+        configuration = (ROOT / "ops/sso/configuration.yml").read_text(encoding="utf-8")
+        owner_rule = configuration.index("subject: group:owners")
+        deny_rule = configuration.index("policy: deny", owner_rule)
+        general_rule = configuration.index("- domain: bonifacio.work", deny_rule)
+
+        self.assertLess(owner_rule, deny_rule)
+        self.assertLess(deny_rule, general_rule)
+        self.assertIn("password_change:\n    disable: true", configuration)
+        self.assertIn("disable_healthcheck: true", configuration)
+        self.assertIn("password_reset:\n    disable: true", configuration)
+        self.assertIn("min_length: 14", configuration)
+        self.assertIn("require_special: true", configuration)
+
+    def test_runtime_image_is_pinned_and_contains_admin_runtime(self) -> None:
+        dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+        self.assertEqual(dockerfile.count("node:22-bookworm-slim@sha256:"), 2)
+        self.assertIn("COPY --from=authelia /app/authelia /usr/local/bin/authelia", dockerfile)
+        self.assertIn('CMD ["node", "ops/sso/admin/landing.mjs"]', dockerfile)
 
 
 if __name__ == "__main__":

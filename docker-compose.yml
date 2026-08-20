@@ -24,6 +24,9 @@ services:
     image: authelia/authelia:4.39.20@sha256:68277b28658a69bb3f512c2c23c41c7df7d9311d0e506e64e26c96dcd75d0539
     platform: linux/arm64
     container_name: bonifacioSso
+    entrypoint: ["/app/authelia"]
+    command: ["--config", "/config/configuration.yml"]
+    user: "0:0"
     init: true
     restart: unless-stopped
     depends_on:
@@ -41,8 +44,8 @@ services:
         target: /config/configuration.yml
         read_only: true
       - type: bind
-        source: ${BONIFACIO_SSO_USERS_PATH:-./.runtime/sso/users_database.yml}
-        target: /config/users_database.yml
+        source: ${BONIFACIO_SSO_USERS_PATH:-./.runtime/sso/userdb/current}
+        target: /config/users
         read_only: true
       - bonifacio_sso_data:/data
     secrets:
@@ -52,21 +55,77 @@ services:
       - bonifacio-sso
     security_opt:
       - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777
     cap_drop:
       - ALL
-    cap_add:
-      - CHOWN
-      - SETGID
-      - SETUID
     pids_limit: 128
     mem_limit: 256m
     cpus: 0.75
     healthcheck:
-      test: ["CMD", "/app/healthcheck.sh"]
+      test:
+        [
+          "CMD",
+          "wget",
+          "--quiet",
+          "--tries=1",
+          "--spider",
+          "http://127.0.0.1:9091/sso/api/health",
+        ]
       interval: 15s
       timeout: 5s
       retries: 6
       start_period: 20s
+
+  bonifacioSsoAdmin:
+    image: ${BONIFACIO_IMAGE:-ghcr.io/facio313/bonifacio:latest}
+    build:
+      context: .
+    container_name: bonifacioSsoAdmin
+    command: ["node", "ops/sso/admin/server.mjs"]
+    user: "0:0"
+    init: true
+    restart: unless-stopped
+    read_only: true
+    depends_on:
+      bonifacioSso:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${BONIFACIO_SSO_ADMIN_PORT:-9092}:9092"
+    environment:
+      ADMIN_ORIGIN: https://bonifacio.work
+      ADMIN_PORT: "9092"
+      ADMIN_EDGE_SECRET_FILE: /run/secrets/bonifacio_sso_admin_edge_secret
+      AUTHELIA_BINARY: /usr/local/bin/authelia
+      USERS_DATABASE_PATH: /data/users/current/users_database.yml
+    volumes:
+      - type: bind
+        source: ${BONIFACIO_SSO_USERDB_PATH:-./.runtime/sso/userdb}
+        target: /data/users
+    secrets:
+      - bonifacio_sso_admin_edge_secret
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
+    mem_limit: 192m
+    cpus: 0.75
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:9092/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 10s
 
   bonifacio:
     image: ${BONIFACIO_IMAGE:-ghcr.io/facio313/bonifacio:latest}
@@ -99,3 +158,5 @@ secrets:
     file: ${BONIFACIO_SSO_SESSION_SECRET_PATH:-./.runtime/sso/secrets/session-secret}
   authelia_storage_encryption_key:
     file: ${BONIFACIO_SSO_STORAGE_KEY_PATH:-./.runtime/sso/secrets/storage-encryption-key}
+  bonifacio_sso_admin_edge_secret:
+    file: ${BONIFACIO_SSO_ADMIN_EDGE_SECRET_PATH:-./.runtime/sso/secrets/admin-edge-secret}

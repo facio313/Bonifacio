@@ -26,6 +26,7 @@ class WriteUserDatabaseTests(unittest.TestCase):
             source = output.read_text(encoding="utf-8")
             self.assertIn("owner@bonifacio.work", source)
             self.assertIn(DIGEST, source)
+            self.assertIn("      - owners\n      - users\n", source)
             self.assertEqual(stat.S_IMODE(output.stat().st_mode), 0o600)
             with self.assertRaises(FileExistsError):
                 write_database(

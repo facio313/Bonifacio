@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Bonifacio 사용자 관리</title>
+    <link rel="stylesheet" href="/sso/admin/admin.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">BONIFACIO SSO</p>
+          <h1>사용자 관리</h1>
+          <p>중앙 로그인 계정을 발급하고 접근 권한을 관리합니다.</p>
+        </div>
+        <div class="actor" aria-live="polite">
+          <span>로그인한 관리자</span>
+          <strong id="actor">확인 중…</strong>
+          <a href="/sso/logout?rd=https%3A%2F%2Fbonifacio.work%2F">로그아웃</a>
+        </div>
+      </header>
+
+      <div id="message" class="message" role="status" aria-live="polite" hidden></div>
+
+      <section class="panel" aria-labelledby="create-title">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">NEW ACCOUNT</p>
+            <h2 id="create-title">새 사용자 발급</h2>
+          </div>
+          <p>24자리 임시 비밀번호는 생성 직후 한 번만 표시됩니다.</p>
+        </div>
+        <form id="create-form" class="form-grid">
+          <label>
+            아이디
+            <input name="username" required pattern="[a-z0-9][a-z0-9_-]{0,63}" autocomplete="off" />
+          </label>
+          <label>
+            표시 이름
+            <input name="displayName" required maxlength="120" autocomplete="name" />
+          </label>
+          <label>
+            이메일
+            <input name="email" required type="email" maxlength="254" autocomplete="email" />
+          </label>
+          <label class="check-row">
+            <input name="owner" type="checkbox" />
+            관리자 권한 부여
+          </label>
+          <button type="submit">계정 발급</button>
+        </form>
+      </section>
+
+      <section class="panel" aria-labelledby="users-title">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">DIRECTORY</p>
+            <h2 id="users-title">가입자 목록</h2>
+          </div>
+          <button id="refresh" class="secondary" type="button">새로고침</button>
+        </div>
+        <div id="users" class="users" aria-live="polite"></div>
+      </section>
+    </main>
+
+    <dialog id="credential-dialog">
+      <form method="dialog" class="credential-card">
+        <p class="eyebrow">ONE-TIME CREDENTIAL</p>
+        <h2>임시 로그인 정보</h2>
+        <p>이 비밀번호는 다시 조회할 수 없습니다. 지금 안전하게 전달하세요.</p>
+        <dl>
+          <div><dt>아이디</dt><dd id="credential-username"></dd></div>
+          <div><dt>임시 비밀번호</dt><dd><code id="credential-password"></code></dd></div>
+        </dl>
+        <div class="dialog-actions">
+          <button id="copy-password" type="button">비밀번호 복사</button>
+          <button class="secondary" value="close">확인</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script type="module" src="/sso/admin/admin.js"></script>
+  </body>
+</html>

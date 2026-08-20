@@ -1,0 +1,68 @@
+:root {
+  color-scheme: dark;
+  font-family: Inter, Pretendard, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #07110f;
+  color: #e9f8f2;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; background: radial-gradient(circle at top left, #16372d 0, #07110f 42rem); }
+button, input { font: inherit; }
+button { cursor: pointer; }
+
+.shell { width: min(1120px, calc(100% - 32px)); margin: 0 auto; padding: 48px 0 80px; }
+.hero { display: flex; justify-content: space-between; gap: 32px; align-items: end; margin-bottom: 28px; }
+.hero h1 { font-size: clamp(2.1rem, 5vw, 4.2rem); margin: 4px 0 10px; letter-spacing: -.05em; }
+.hero p { margin: 0; color: #a8c8bc; }
+.eyebrow { color: #7ee2b8 !important; font-size: .75rem; font-weight: 800; letter-spacing: .16em; }
+.actor { display: grid; gap: 5px; padding: 16px 18px; border: 1px solid #2b4d42; border-radius: 16px; background: #0b1b17cc; }
+.actor span { color: #8fb2a5; font-size: .78rem; }
+.actor a { color: #82e6bd; font-size: .85rem; }
+
+.panel { margin-top: 20px; padding: 24px; border: 1px solid #25473c; border-radius: 22px; background: #0b1916e8; box-shadow: 0 18px 45px #0006; }
+.panel-heading { display: flex; justify-content: space-between; align-items: end; gap: 24px; margin-bottom: 20px; }
+.panel-heading h2 { margin: 3px 0 0; }
+.panel-heading > p { max-width: 460px; margin: 0; color: #97b6aa; font-size: .9rem; }
+.form-grid, .user-form { display: grid; gap: 14px; }
+.form-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: end; }
+label { display: grid; gap: 7px; color: #b8d3c9; font-size: .82rem; font-weight: 700; }
+input { width: 100%; border: 1px solid #34584c; border-radius: 10px; padding: 11px 12px; background: #07110f; color: #eefbf6; }
+input:focus { outline: 2px solid #63d3a5; outline-offset: 2px; }
+.check-row { display: flex; align-items: center; gap: 9px; min-height: 42px; }
+.check-row input { width: 18px; height: 18px; }
+button { border: 0; border-radius: 10px; padding: 11px 16px; background: #63d3a5; color: #04100c; font-weight: 800; }
+button:hover { filter: brightness(1.08); }
+button:disabled { cursor: wait; opacity: .55; }
+button.secondary { border: 1px solid #3c6557; background: transparent; color: #d7eee5; }
+
+.message { position: sticky; top: 12px; z-index: 5; padding: 13px 16px; border: 1px solid #2f765e; border-radius: 12px; background: #10382b; }
+.message[data-tone="error"] { border-color: #a94e58; background: #431a20; }
+.users { display: grid; gap: 14px; }
+.user-card { padding: 18px; border: 1px solid #23453a; border-radius: 16px; background: #071310; }
+.user-heading { display: flex; justify-content: space-between; align-items: start; margin-bottom: 15px; }
+.user-heading > div { display: flex; align-items: center; gap: 10px; }
+.user-heading h3 { margin: 0; font-size: 1.15rem; }
+.user-heading small { color: #8dad9f; }
+.badge { border-radius: 999px; padding: 4px 8px; font-size: .7rem; font-weight: 800; }
+.badge.active { background: #174b38; color: #8df0c5; }
+.badge.disabled { background: #482128; color: #ffabb4; }
+.user-form { grid-template-columns: 1fr 1.25fr auto auto; align-items: end; }
+.actions { display: flex; gap: 8px; grid-column: 1 / -1; justify-content: end; }
+
+dialog { width: min(520px, calc(100% - 32px)); border: 1px solid #3a6556; border-radius: 20px; padding: 0; color: #eefbf6; background: #0b1916; }
+dialog::backdrop { background: #000a; backdrop-filter: blur(4px); }
+.credential-card { padding: 26px; }
+.credential-card h2 { margin: 4px 0 10px; }
+.credential-card > p { color: #9fbbb0; }
+dl { display: grid; gap: 10px; margin: 20px 0; }
+dl div { padding: 12px; border-radius: 10px; background: #06100d; }
+dt { color: #86aa9c; font-size: .75rem; }
+dd { margin: 4px 0 0; overflow-wrap: anywhere; }
+code { color: #8ef0c7; }
+.dialog-actions { display: flex; justify-content: end; gap: 8px; }
+
+@media (max-width: 820px) {
+  .hero, .panel-heading { align-items: start; flex-direction: column; }
+  .form-grid, .user-form { grid-template-columns: 1fr; }
+  .actions { grid-column: auto; flex-direction: column; }
+}

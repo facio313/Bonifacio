@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:sso-admin": "node --test ops/sso/admin/*.test.mjs"
   },
   "repository": {
     "type": "git",
@@ -31,6 +32,7 @@
     "framer-motion": "^12.40.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
-    "tailwindcss": "^4.3.0"
+    "tailwindcss": "^4.3.0",
+    "yaml": "2.9.0"
   }
 }

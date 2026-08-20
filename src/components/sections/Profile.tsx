@@ -81,6 +81,9 @@ export const Profile = () => {
           <a className="monitor-link" href="/monitor/" aria-label="서버 모니터 열기">
             Monitor <Arrow size={10} rotate={-45} />
           </a>
+          <a className="monitor-link" href="/sso/admin/" aria-label="SSO 사용자 관리 열기">
+            SSO Admin <Arrow size={10} rotate={-45} />
+          </a>
         </div>
       </div>
 
