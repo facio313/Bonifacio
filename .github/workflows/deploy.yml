@@ -27,6 +27,27 @@ jobs:
       - name: Check out source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.23.2
+          cache: npm
+
+      - name: Validate landing page and SSO contracts
+        run: |
+          set -Eeuo pipefail
+          npm ci
+          npm run build
+          python3 -m unittest discover -s ops/sso -p 'test_*.py'
+          docker compose config --quiet
+          docker run --rm \
+            -e AUTHELIA_SESSION_SECRET='ci-session-secret-with-at-least-sixty-four-characters-000000000000' \
+            -e AUTHELIA_STORAGE_ENCRYPTION_KEY='ci-storage-key-with-at-least-sixty-four-characters-00000000000000' \
+            -v "$PWD/ops/sso/configuration.yml:/config/configuration.yml:ro" \
+            -v "$PWD/ops/sso/users_database.example.yml:/config/users_database.yml:ro" \
+            authelia/authelia:4.39.20@sha256:68277b28658a69bb3f512c2c23c41c7df7d9311d0e506e64e26c96dcd75d0539 \
+            authelia config validate --config /config/configuration.yml
+
       - name: Sign in to GitHub Container Registry
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:

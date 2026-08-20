@@ -1,0 +1,9 @@
+---
+users:
+  owner:
+    disabled: false
+    displayname: Owner
+    password: "$argon2id$v=19$m=65536,t=3,p=4$replace-with-operator-generated-digest"
+    email: owner@bonifacio.work
+    groups:
+      - owners

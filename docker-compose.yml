@@ -1,4 +1,73 @@
 services:
+  bonifacioSsoRedis:
+    image: redis:8.2.7-alpine@sha256:223b183cbc49f5ff48728e1fc52ccf101f05072decad2bd9867281a3c9bf75fd
+    platform: linux/arm64
+    container_name: bonifacioSsoRedis
+    init: true
+    restart: unless-stopped
+    read_only: true
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777
+    volumes:
+      - bonifacio_sso_redis_data:/data
+    networks:
+      - bonifacio-sso
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
+  bonifacioSso:
+    image: authelia/authelia:4.39.20@sha256:68277b28658a69bb3f512c2c23c41c7df7d9311d0e506e64e26c96dcd75d0539
+    platform: linux/arm64
+    container_name: bonifacioSso
+    init: true
+    restart: unless-stopped
+    depends_on:
+      bonifacioSsoRedis:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${BONIFACIO_SSO_PORT:-9091}:9091"
+    environment:
+      TZ: Asia/Seoul
+      AUTHELIA_SESSION_SECRET_FILE: /run/secrets/authelia_session_secret
+      AUTHELIA_STORAGE_ENCRYPTION_KEY_FILE: /run/secrets/authelia_storage_encryption_key
+    volumes:
+      - type: bind
+        source: ${BONIFACIO_SSO_CONFIGURATION_PATH:-./ops/sso/configuration.yml}
+        target: /config/configuration.yml
+        read_only: true
+      - type: bind
+        source: ${BONIFACIO_SSO_USERS_PATH:-./.runtime/sso/users_database.yml}
+        target: /config/users_database.yml
+        read_only: true
+      - bonifacio_sso_data:/data
+    secrets:
+      - authelia_session_secret
+      - authelia_storage_encryption_key
+    networks:
+      - bonifacio-sso
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    pids_limit: 128
+    mem_limit: 256m
+    cpus: 0.75
+    healthcheck:
+      test: ["CMD", "/app/healthcheck.sh"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
   bonifacio:
     image: ${BONIFACIO_IMAGE:-ghcr.io/facio313/bonifacio:latest}
     build:
@@ -7,3 +76,26 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:5173:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:80/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 10s
+
+networks:
+  bonifacio-sso:
+    name: bonifacio-sso
+    driver: bridge
+
+volumes:
+  bonifacio_sso_data:
+    name: bonifacio-sso-data
+  bonifacio_sso_redis_data:
+    name: bonifacio-sso-redis-data
+
+secrets:
+  authelia_session_secret:
+    file: ${BONIFACIO_SSO_SESSION_SECRET_PATH:-./.runtime/sso/secrets/session-secret}
+  authelia_storage_encryption_key:
+    file: ${BONIFACIO_SSO_STORAGE_KEY_PATH:-./.runtime/sso/secrets/storage-encryption-key}
