@@ -9,7 +9,7 @@ Keep these paths outside Git with directory mode `0700` and file mode `0600`:
 - `userdb/current/users_database.yml`: the complete user directory and Argon2id password digests
 - `userdb/backups/`: automatic pre-change copies retained by the administrator service
 - `userdb/audit.jsonl`: password-free account management events
-- `owner-credentials.txt`: the initial owner credential handoff; move it to a password manager after first use
+- `bootstrap-credentials.txt`: the initial administrator credential handoff; delete it after choosing a private password
 - `session-secret`: session encryption material
 - `storage-encryption-key`: Authelia storage encryption material
 
