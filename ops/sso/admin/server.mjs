@@ -19,10 +19,13 @@ import {
   assertOwnerMutationAllowed,
   generateTemporaryCredential,
   groupsForOwner,
+  hashPassword,
   normalizeDisplayName,
   normalizeEmail,
+  normalizePassword,
   normalizeUsername,
   publicUsers,
+  verifyPassword,
 } from './lib.mjs';
 
 const BASE = '/sso/admin';
@@ -248,6 +251,39 @@ async function handleApi(request, response, url, dependencies) {
   }
 
   requireMutationProtection(request);
+  if (request.method === 'POST' && url.pathname === `${BASE}/api/account/password`) {
+    const expectedRevision = requiredRevision(request);
+    const body = await jsonBody(request);
+    requireExactBody(body, ['currentPassword', 'newPassword', 'confirmPassword']);
+    const currentPassword = normalizePassword(body.currentPassword, '현재 비밀번호', 1);
+    const newPassword = normalizePassword(body.newPassword);
+    const confirmPassword = normalizePassword(body.confirmPassword, '새 비밀번호 확인');
+    if (newPassword !== confirmPassword) {
+      throw new AdminError(400, 'password_confirmation_mismatch', '새 비밀번호 확인이 일치하지 않습니다.');
+    }
+    await dependencies.store.mutate({
+      actor: actor.username,
+      action: 'change_own_password',
+      target: actor.username,
+      expectedRevision,
+      transform: async (database) => {
+        assertAuthorizedOwner(database, actor);
+        const current = database.users[actor.username];
+        if (!await dependencies.verifyCredential(currentPassword, current.password)) {
+          throw new AdminError(400, 'current_password_invalid', '현재 비밀번호가 맞지 않습니다.');
+        }
+        current.password = await dependencies.hashCredential(newPassword);
+      },
+    });
+    const current = await dependencies.store.readVersioned();
+    sendJson(response, 200, {
+      changed: true,
+      logoutUrl: `/sso/logout?rd=${encodeURIComponent(`${origin}${BASE}/`)}`,
+      revision: current.revision,
+    });
+    return;
+  }
+
   if (request.method === 'POST' && url.pathname === `${BASE}/api/users`) {
     const expectedRevision = requiredRevision(request);
     const body = await jsonBody(request);
@@ -359,6 +395,8 @@ async function handleApi(request, response, url, dependencies) {
 export function createHandler({
   store = defaultStore,
   generateCredential = generateTemporaryCredential,
+  hashCredential = hashPassword,
+  verifyCredential = verifyPassword,
   edgeSecret,
 } = {}) {
   return async function handler(request, response) {
@@ -375,6 +413,8 @@ export function createHandler({
         await handleApi(request, response, url, {
           store,
           generateCredential,
+          hashCredential,
+          verifyCredential,
           edgeSecret: trustedEdgeSecret,
         });
         return;

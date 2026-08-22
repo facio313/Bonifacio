@@ -21,6 +21,17 @@ const USERNAME = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const GROUP = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const ARGON2ID = /^\$argon2id\$v=19\$m=\d+,t=\d+,p=\d+\$[A-Za-z0-9+/]+\$[A-Za-z0-9+/]+$/;
 const ALLOWED_GROUPS = new Set(['owners', 'users']);
+const PASSWORD_MIN_LENGTH = 4;
+const PASSWORD_MAX_LENGTH = 128;
+const PASSWORD_PROMPT = 'Enter Password:';
+const HASH_PASSWORD_COMMAND = [
+  'stty cols 160 rows 40',
+  'exec "$AUTHELIA_BINARY" crypto hash generate argon2 --no-confirm --variant argon2id --iterations 3 --memory 65536 --parallelism 4 --key-size 32 --salt-size 16',
+].join('; ');
+const VERIFY_PASSWORD_COMMAND = [
+  'stty cols 160 rows 40',
+  'exec "$AUTHELIA_BINARY" crypto hash validate -- "$AUTHELIA_PASSWORD_DIGEST"',
+].join('; ');
 
 export class AdminError extends Error {
   constructor(status, code, message) {
@@ -72,6 +83,25 @@ export function normalizeEmail(value) {
 
 export function normalizeDisplayName(value) {
   return cleanText(value, '표시 이름');
+}
+
+export function normalizePassword(value, field = '새 비밀번호', minimumLength = PASSWORD_MIN_LENGTH) {
+  if (typeof value !== 'string') {
+    throw new AdminError(400, 'invalid_password', `${field} 형식이 올바르지 않습니다.`);
+  }
+  const length = Array.from(value).length;
+  if (
+    length < minimumLength ||
+    length > PASSWORD_MAX_LENGTH ||
+    /[\u0000-\u001f\u007f]/.test(value)
+  ) {
+    throw new AdminError(
+      400,
+      'invalid_password',
+      `${field}는 ${minimumLength}자 이상 ${PASSWORD_MAX_LENGTH}자 이하이며 제어 문자를 포함할 수 없습니다.`,
+    );
+  }
+  return value;
 }
 
 function normalizeGroups(value) {
@@ -462,6 +492,157 @@ export function generateTemporaryCredential(
       resolve({ password, digest });
     });
   });
+}
+
+function passwordProcessingError() {
+  return new AdminError(500, 'hash_failed', '비밀번호를 안전하게 처리할 수 없습니다.');
+}
+
+function passwordCommandLines(output) {
+  return output
+    .replace(/\r/g, '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function runPasswordPrompt(
+  command,
+  password,
+  {
+    binary = process.env.AUTHELIA_BINARY ?? '/usr/local/bin/authelia',
+    digest,
+    scriptBinary = process.env.SCRIPT_BINARY ?? '/usr/bin/script',
+    timeoutMs = 15000,
+  } = {},
+) {
+  return new Promise((resolve, reject) => {
+    let child;
+    let output = '';
+    let errorOutput = '';
+    let outputBytes = 0;
+    let errorOutputBytes = 0;
+    let prompted = false;
+    let settled = false;
+    let timer;
+
+    const finish = (error, result) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      if (error) reject(error);
+      else resolve(result);
+    };
+    const terminate = () => {
+      if (!child?.pid) return;
+      try {
+        process.kill(-child.pid, 'SIGKILL');
+      } catch {
+        child.kill('SIGKILL');
+      }
+    };
+
+    try {
+      child = spawn(
+        scriptBinary,
+        ['-q', '-e', '-E', 'never', '-c', command, '/dev/null'],
+        {
+          detached: true,
+          env: {
+            AUTHELIA_BINARY: binary,
+            AUTHELIA_PASSWORD_DIGEST: digest ?? '',
+            LC_ALL: 'C',
+            PATH: '/usr/bin:/bin',
+            SHELL: '/bin/sh',
+          },
+          stdio: ['pipe', 'pipe', 'pipe'],
+        },
+      );
+    } catch {
+      reject(passwordProcessingError());
+      return;
+    }
+
+    timer = setTimeout(() => {
+      terminate();
+      finish(passwordProcessingError());
+    }, timeoutMs);
+
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => {
+      outputBytes += Buffer.byteLength(chunk, 'utf8');
+      if (outputBytes > 16384) {
+        terminate();
+        finish(passwordProcessingError());
+        return;
+      }
+      output += chunk;
+      const promptView = output.replace(/[\r\n]/g, '');
+      if (!prompted && new RegExp(`^${PASSWORD_PROMPT} *$`).test(promptView)) {
+        prompted = true;
+        child.stdin.end(`${password}\n`);
+      } else if (prompted && promptView.split(PASSWORD_PROMPT).length !== 2) {
+        terminate();
+        finish(passwordProcessingError());
+      }
+    });
+    child.stderr.on('data', (chunk) => {
+      errorOutputBytes += Buffer.byteLength(chunk, 'utf8');
+      if (errorOutputBytes > 4096) {
+        terminate();
+        finish(passwordProcessingError());
+        return;
+      }
+      errorOutput += chunk;
+    });
+    child.stdin.on('error', () => undefined);
+    child.on('error', () => finish(passwordProcessingError()));
+    child.on('close', (code) => {
+      if (!prompted || errorOutput.trim()) {
+        finish(passwordProcessingError());
+        return;
+      }
+      finish(undefined, { code, output });
+    });
+  });
+}
+
+export async function hashPassword(
+  value,
+  options = {},
+) {
+  const password = normalizePassword(value);
+  const result = await runPasswordPrompt(HASH_PASSWORD_COMMAND, password, options);
+  const lines = passwordCommandLines(result.output);
+  const digest = lines[1]?.match(/^Digest: (\S+)$/)?.[1];
+  if (
+    result.code !== 0 ||
+    lines.length !== 2 ||
+    lines[0] !== PASSWORD_PROMPT ||
+    !digest ||
+    !ARGON2ID.test(digest)
+  ) {
+    throw passwordProcessingError();
+  }
+  return digest;
+}
+
+export async function verifyPassword(
+  value,
+  digest,
+  options = {},
+) {
+  const password = normalizePassword(value, '현재 비밀번호', 1);
+  if (typeof digest !== 'string' || !ARGON2ID.test(digest)) throw passwordProcessingError();
+  const result = await runPasswordPrompt(VERIFY_PASSWORD_COMMAND, password, { ...options, digest });
+  const lines = passwordCommandLines(result.output);
+  if (result.code !== 0 || lines.length !== 2 || lines[0] !== PASSWORD_PROMPT) {
+    throw passwordProcessingError();
+  }
+  if (lines[1] === 'The password does not match the digest.') return false;
+  if (lines[1] === 'The password matches the digest.') return true;
+  throw passwordProcessingError();
 }
 
 export function groupsForOwner(owner) {

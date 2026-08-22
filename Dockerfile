@@ -21,6 +21,7 @@ COPY --from=builder /app/dist ./dist
 COPY --from=authelia /app/authelia /usr/local/bin/authelia
 COPY ops/sso/admin ./ops/sso/admin
 
+RUN test -x /usr/bin/script
 RUN chown -R node:node /app
 USER node
 

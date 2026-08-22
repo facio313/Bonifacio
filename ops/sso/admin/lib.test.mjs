@@ -10,6 +10,7 @@ import {
   UserStore,
   assertAuthorizedOwner,
   assertOwnerMutationAllowed,
+  normalizePassword,
   parseUserDatabase,
   publicUsers,
   serializeUserDatabase,
@@ -23,6 +24,7 @@ import {
 } from './server.mjs';
 
 const digest = '$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$ZGlnZXN0';
+const changedDigest = '$argon2id$v=19$m=65536,t=3,p=4$bmV3c2FsdA$bmV3ZGlnZXN0';
 
 function database() {
   return {
@@ -52,6 +54,17 @@ test('user database round-trips without exposing password hashes', () => {
   assert.equal(publicResult.length, 2);
   assert.equal(JSON.stringify(publicResult).includes('argon2'), false);
   assert.equal(JSON.stringify(publicResult).includes('password'), false);
+});
+
+test('chosen passwords allow four-character bootstrap values and reject unsafe input', () => {
+  assert.equal(normalizePassword('1234'), '1234');
+  assert.equal(normalizePassword('내가 원하는 안전한 비밀번호!'), '내가 원하는 안전한 비밀번호!');
+  for (const value of ['123', 'line\nbreak', 'x'.repeat(129), null]) {
+    assert.throws(
+      () => normalizePassword(value),
+      (error) => error instanceof AdminError && error.code === 'invalid_password',
+    );
+  }
 });
 
 test('database rejects duplicate YAML keys and unknown groups', () => {
@@ -182,12 +195,23 @@ test('admin API creates and lists a redacted account through all authentication 
   const path = join(current, 'users_database.yml');
   const edgeSecret = 'test-edge-secret-with-at-least-32-bytes';
   const temporaryPassword = 'one-time-password-not-stored';
+  let verifiedPassword;
+  let chosenPassword;
   await mkdir(current, { mode: 0o700 });
   await writeFile(path, serializeUserDatabase(database()), { mode: 0o600 });
   const server = createServer(createHandler({
     store: new UserStore(path, { minimumWriteIntervalMs: 0 }),
     edgeSecret,
     generateCredential: async () => ({ password: temporaryPassword, digest }),
+    verifyCredential: async (password, currentDigest) => {
+      verifiedPassword = password;
+      assert.equal(currentDigest, digest);
+      return password === 'current-owner-password';
+    },
+    hashCredential: async (password) => {
+      chosenPassword = password;
+      return changedDigest;
+    },
   }));
   try {
     await new Promise((resolve, reject) => {
@@ -243,6 +267,51 @@ test('admin API creates and lists a redacted account through all authentication 
     assert.equal(listed.users.some((user) => user.username === 'new-member'), true);
     assert.equal(JSON.stringify(listed).includes('password'), false);
     assert.equal(JSON.stringify(listed).includes('argon2'), false);
+
+    const wrongCurrentResponse = await fetch(`${base}/account/password`, {
+      method: 'POST',
+      headers: {
+        ...identityHeaders,
+        'Content-Type': 'application/json',
+        Cookie: cookie,
+        Origin: 'https://bonifacio.work',
+        'X-CSRF-Token': session.csrfToken,
+        'If-Match': created.revision,
+      },
+      body: JSON.stringify({
+        currentPassword: 'wrong-owner-password',
+        newPassword: '1234',
+        confirmPassword: '1234',
+      }),
+    });
+    assert.equal(wrongCurrentResponse.status, 400);
+    assert.equal(chosenPassword, undefined);
+
+    const changePasswordResponse = await fetch(`${base}/account/password`, {
+      method: 'POST',
+      headers: {
+        ...identityHeaders,
+        'Content-Type': 'application/json',
+        Cookie: cookie,
+        Origin: 'https://bonifacio.work',
+        'X-CSRF-Token': session.csrfToken,
+        'If-Match': created.revision,
+      },
+      body: JSON.stringify({
+        currentPassword: 'current-owner-password',
+        newPassword: 'chosen-owner-password',
+        confirmPassword: 'chosen-owner-password',
+      }),
+    });
+    assert.equal(changePasswordResponse.status, 200);
+    const changed = await changePasswordResponse.json();
+    assert.equal(changed.changed, true);
+    assert.equal(changed.logoutUrl, '/sso/logout?rd=https%3A%2F%2Fbonifacio.work%2Fsso%2Fadmin%2F');
+    assert.match(changed.revision, /^[a-f0-9]{64}$/);
+    assert.equal(verifiedPassword, 'current-owner-password');
+    assert.equal(chosenPassword, 'chosen-owner-password');
+    assert.equal((await new UserStore(path).read()).users.owner.password, changedDigest);
+    assert.equal(JSON.stringify(changed).includes('chosen-owner-password'), false);
 
     const invalidDisabledResponse = await fetch(`${base}/users/member`, {
       method: 'PATCH',

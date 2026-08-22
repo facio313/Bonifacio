@@ -17,23 +17,23 @@ class WriteUserDatabaseTests(unittest.TestCase):
             output = Path(directory) / "users.yml"
             write_database(
                 output,
-                username="owner",
-                display_name="Owner",
-                email="owner@bonifacio.work",
+                username="cks",
+                display_name="cks",
+                email="cks@bonifacio.work",
                 digest=DIGEST,
             )
 
             source = output.read_text(encoding="utf-8")
-            self.assertIn("owner@bonifacio.work", source)
+            self.assertIn("cks@bonifacio.work", source)
             self.assertIn(DIGEST, source)
             self.assertIn("      - owners\n      - users\n", source)
             self.assertEqual(stat.S_IMODE(output.stat().st_mode), 0o600)
             with self.assertRaises(FileExistsError):
                 write_database(
                     output,
-                    username="owner",
-                    display_name="Owner",
-                    email="owner@bonifacio.work",
+                    username="cks",
+                    display_name="cks",
+                    email="cks@bonifacio.work",
                     digest=DIGEST,
                 )
 

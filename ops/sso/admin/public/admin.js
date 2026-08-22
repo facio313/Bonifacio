@@ -3,6 +3,8 @@ const actor = document.querySelector('#actor');
 const message = document.querySelector('#message');
 const usersRoot = document.querySelector('#users');
 const createForm = document.querySelector('#create-form');
+const passwordForm = document.querySelector('#password-form');
+const passwordSubmit = document.querySelector('#password-submit');
 const credentialDialog = document.querySelector('#credential-dialog');
 const credentialUsername = document.querySelector('#credential-username');
 const credentialPassword = document.querySelector('#credential-password');
@@ -140,8 +142,35 @@ async function loadUsers() {
   const payload = await request('/users');
   state.users = payload.users;
   state.revision = payload.revision;
+  passwordSubmit.disabled = false;
   renderUsers();
 }
+
+passwordForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const data = new FormData(passwordForm);
+  const currentPassword = data.get('currentPassword');
+  const newPassword = data.get('newPassword');
+  const confirmPassword = data.get('confirmPassword');
+  if (newPassword !== confirmPassword) {
+    showMessage('새 비밀번호 확인이 일치하지 않습니다.', 'error');
+    return;
+  }
+  passwordSubmit.disabled = true;
+  try {
+    const payload = await request('/account/password', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, newPassword, confirmPassword }),
+    });
+    state.revision = payload.revision;
+    passwordForm.reset();
+    window.location.assign(payload.logoutUrl);
+  } catch (error) {
+    showMessage(error.message, 'error');
+  } finally {
+    passwordSubmit.disabled = false;
+  }
+});
 
 createForm.addEventListener('submit', async (event) => {
   event.preventDefault();

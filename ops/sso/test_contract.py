@@ -73,6 +73,9 @@ class PortfolioSsoContractTests(unittest.TestCase):
 
     def test_admin_acl_precedes_general_access_and_password_change_is_local(self) -> None:
         configuration = (ROOT / "ops/sso/configuration.yml").read_text(encoding="utf-8")
+        server = (ROOT / "ops/sso/admin/server.mjs").read_text(encoding="utf-8")
+        library = (ROOT / "ops/sso/admin/lib.mjs").read_text(encoding="utf-8")
+        page = (ROOT / "ops/sso/admin/public/index.html").read_text(encoding="utf-8")
         owner_rule = configuration.index("subject: group:owners")
         deny_rule = configuration.index("policy: deny", owner_rule)
         general_rule = configuration.index("- domain: bonifacio.work", deny_rule)
@@ -84,11 +87,21 @@ class PortfolioSsoContractTests(unittest.TestCase):
         self.assertIn("password_reset:\n    disable: true", configuration)
         self.assertIn("min_length: 14", configuration)
         self.assertIn("require_special: true", configuration)
+        self.assertIn("/api/account/password", server)
+        self.assertIn("currentPassword", server)
+        self.assertIn("verifyCredential(currentPassword, current.password)", server)
+        self.assertIn("current.password = await dependencies.hashCredential(newPassword)", server)
+        self.assertIn("'change_own_password'", server)
+        self.assertIn("['-q', '-e', '-E', 'never', '-c', command, '/dev/null']", library)
+        self.assertIn("child.stdin.end(`${password}\\n`)", library)
+        self.assertNotIn("'--password'", library)
+        self.assertIn('id="password-form"', page)
 
     def test_runtime_image_is_pinned_and_contains_admin_runtime(self) -> None:
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
         self.assertEqual(dockerfile.count("node:22-bookworm-slim@sha256:"), 2)
         self.assertIn("COPY --from=authelia /app/authelia /usr/local/bin/authelia", dockerfile)
+        self.assertIn("RUN test -x /usr/bin/script", dockerfile)
         self.assertIn('CMD ["node", "ops/sso/admin/landing.mjs"]', dockerfile)
 
 

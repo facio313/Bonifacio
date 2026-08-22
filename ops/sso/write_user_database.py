@@ -69,9 +69,9 @@ def write_database(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--username", default="owner")
-    parser.add_argument("--display-name", default="Owner")
-    parser.add_argument("--email", default="owner@bonifacio.work")
+    parser.add_argument("--username", default="cks")
+    parser.add_argument("--display-name", default="cks")
+    parser.add_argument("--email", default="cks@bonifacio.work")
     args = parser.parse_args()
     digest = sys.stdin.readline().strip()
     write_database(
