@@ -4,7 +4,7 @@ import { SectionRail } from '../Nav'
 
 export const Contact = () => {
   const links = [
-    { k: 'Email', v: 'facio313@naver.com', href: 'mailto:facio313@naver.com' },
+    { k: 'Email', v: 'cks@bonifacio.work', href: 'mailto:cks@bonifacio.work' },
     { k: 'GitHub', v: 'github.com/facio313', href: 'https://github.com/facio313' },
     { k: 'LinkedIn', v: 'in/choikyungsoo', href: '#' },
     { k: 'Resume', v: 'PDF · 2026', href: '#' },
@@ -70,7 +70,7 @@ export const Contact = () => {
           }}
         >
           <a
-            href="mailto:facio313@naver.com"
+            href="mailto:cks@bonifacio.work"
             className="cta"
             style={{
               display: 'inline-flex',
@@ -94,7 +94,7 @@ export const Contact = () => {
               e.currentTarget.style.transform = 'translateY(0)'
             }}
           >
-            facio313@naver.com
+            cks@bonifacio.work
             <Arrow rotate={-45} size={16} />
           </a>
 

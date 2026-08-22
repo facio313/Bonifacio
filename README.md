@@ -12,9 +12,47 @@ The repository contains only the non-secret SSO configuration. Create the real o
 
 The edge protects the landing page plus React, Vue, Dukkeobi, DDIT FinalProject, Monitor, Pilgrimage, Multtara, and FeelMyRythm. Pilgrimage keeps only its documented health, asset, and UUID share routes public. Deployment checks call loopback origins so a login redirect can never be mistaken for application health.
 
+## Branch authentication contract
+
+Every process, build, and repository Compose invocation resolves authentication
+through `scripts/portfolio-auth-mode.sh`:
+
+| Branch | Authentication mode |
+| --- | --- |
+| `main`, `dev` | `sso` |
+| every other branch | `local` |
+
+Branch resolution uses an explicit `PORTFOLIO_BRANCH`, then
+`GITHUB_REF_NAME`, then the current Git branch. An explicitly supplied
+`PORTFOLIO_AUTH_MODE` must match the table or the command fails closed. CI and
+Docker builds always provide both values explicitly. The resulting image keeps
+the resolved values as defaults and validates them again at its entrypoint, so
+the existing production Compose deployment does not need a new secret or host
+setting.
+
+The landing page is static: `local` means that a feature-branch Vite server can
+be opened directly, while `sso` keeps the production authorization decision at
+the Nginx/Authelia edge. It does not add a client-side SSO bypass.
+
 Build the landing page with:
 
 ```bash
 npm ci
 npm run build
+```
+
+On a feature branch, run the landing page directly with `npm run dev`. Use the
+contract-aware Compose wrapper for repository-local containers:
+
+```bash
+npm run compose -- up --build
+```
+
+For a Docker build outside Compose, inject the branch contract explicitly:
+
+```bash
+docker build \
+  --build-arg PORTFOLIO_BRANCH=main \
+  --build-arg PORTFOLIO_AUTH_MODE=sso \
+  --tag bonifacio:main .
 ```

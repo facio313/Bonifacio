@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - dev
   workflow_dispatch:
 
 permissions:
@@ -11,11 +12,12 @@ permissions:
   packages: write
 
 concurrency:
-  group: bonifacio-production
+  group: bonifacio-${{ github.ref_name }}
   cancel-in-progress: false
 
 env:
   IMAGE_NAME: ghcr.io/facio313/bonifacio
+  PORTFOLIO_BRANCH: ${{ github.ref_name }}
 
 jobs:
   build-and-deploy:
@@ -29,6 +31,23 @@ jobs:
       - name: Check out source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
+      - name: Resolve branch authentication contract
+        id: auth
+        run: |
+          set -eu
+          ./scripts/test-portfolio-auth-mode.sh
+          mode=$(./scripts/portfolio-auth-mode.sh print)
+          {
+            printf 'branch=%s\n' "$PORTFOLIO_BRANCH"
+            printf 'mode=%s\n' "$mode"
+            printf 'tags<<EOF\n'
+            printf '%s:%s\n' "$IMAGE_NAME" "$GITHUB_SHA"
+            if [ "$GITHUB_REF_NAME" = main ]; then
+              printf '%s:latest\n' "$IMAGE_NAME"
+            fi
+            printf 'EOF\n'
+          } >> "$GITHUB_OUTPUT"
+
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -36,6 +55,8 @@ jobs:
           cache: npm
 
       - name: Validate landing page and SSO contracts
+        env:
+          PORTFOLIO_AUTH_MODE: ${{ steps.auth.outputs.mode }}
         run: |
           set -Eeuo pipefail
           npm ci
@@ -76,13 +97,15 @@ jobs:
           platforms: linux/arm64
           push: true
           pull: true
-          tags: |
-            ${{ env.IMAGE_NAME }}:${{ github.sha }}
-            ${{ env.IMAGE_NAME }}:latest
+          tags: ${{ steps.auth.outputs.tags }}
+          build-args: |
+            PORTFOLIO_BRANCH=${{ steps.auth.outputs.branch }}
+            PORTFOLIO_AUTH_MODE=${{ steps.auth.outputs.mode }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Request restricted server deployment
+        if: github.ref_name == 'main'
         env:
           DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
           GHCR_TOKEN: ${{ github.token }}

@@ -82,6 +82,9 @@ services:
     image: ${BONIFACIO_IMAGE:-ghcr.io/facio313/bonifacio:latest}
     build:
       context: .
+      args:
+        PORTFOLIO_BRANCH: ${PORTFOLIO_BRANCH:?run Compose through npm run compose}
+        PORTFOLIO_AUTH_MODE: ${PORTFOLIO_AUTH_MODE:?run Compose through npm run compose}
     container_name: bonifacioSsoAdmin
     command: ["node", "ops/sso/admin/server.mjs"]
     user: "0:0"
@@ -131,6 +134,9 @@ services:
     image: ${BONIFACIO_IMAGE:-ghcr.io/facio313/bonifacio:latest}
     build:
       context: .
+      args:
+        PORTFOLIO_BRANCH: ${PORTFOLIO_BRANCH:?run Compose through npm run compose}
+        PORTFOLIO_AUTH_MODE: ${PORTFOLIO_AUTH_MODE:?run Compose through npm run compose}
     container_name: bonifacio
     restart: unless-stopped
     ports:

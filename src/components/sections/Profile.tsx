@@ -244,7 +244,7 @@ export const Profile = () => {
           textTransform: 'uppercase',
         }}
       >
-        <span>Seoul, KR · facio313@naver.com</span>
+        <span>Seoul, KR · cks@bonifacio.work</span>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
           Scroll
           <span style={{ display: 'inline-block', animation: 'float 2.4s ease-in-out infinite' }}>
