@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "header": "Remote-Groups",
+  "separator": ",",
+  "roles": [
+    "user",
+    "developer",
+    "admin"
+  ],
+  "administratorRole": "admin",
+  "hierarchy": "prefix"
+}

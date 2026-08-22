@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import unittest
 from pathlib import Path
 
@@ -76,12 +77,33 @@ class PortfolioSsoContractTests(unittest.TestCase):
         server = (ROOT / "ops/sso/admin/server.mjs").read_text(encoding="utf-8")
         library = (ROOT / "ops/sso/admin/lib.mjs").read_text(encoding="utf-8")
         page = (ROOT / "ops/sso/admin/public/index.html").read_text(encoding="utf-8")
-        owner_rule = configuration.index("subject: group:owners")
-        deny_rule = configuration.index("policy: deny", owner_rule)
-        general_rule = configuration.index("- domain: bonifacio.work", deny_rule)
+        admin_rule = configuration.index("subject: group:admin")
+        admin_deny = configuration.index("policy: deny", admin_rule)
+        developer_rule = configuration.index("subject: group:developer", admin_deny)
+        developer_deny = configuration.index("policy: deny", developer_rule)
+        user_rule = configuration.index("subject: group:user", developer_deny)
+        user_deny = configuration.index("policy: deny", user_rule)
 
-        self.assertLess(owner_rule, deny_rule)
-        self.assertLess(deny_rule, general_rule)
+        self.assertLess(admin_rule, admin_deny)
+        self.assertLess(admin_deny, developer_rule)
+        self.assertLess(developer_rule, developer_deny)
+        self.assertLess(developer_deny, user_rule)
+        self.assertLess(user_rule, user_deny)
+        self.assertIn("'^/monitor(?:[/?].*)?$'", configuration)
+        self.assertIn("'^/(?:\\?.*)?$'", configuration)
+        self.assertIn("'^/index\\.html(?:\\?.*)?$'", configuration)
+        self.assertIn("'^/assets(?:[/?].*)?$'", configuration)
+        for route in (
+            "react",
+            "vue",
+            "dukkeobi",
+            "ddit-finalproject",
+            "pilgrimage",
+            "api",
+            "multtara",
+            "feelmyrythm",
+        ):
+            self.assertIn(f"'^/{route}(?:[/?].*)?$'", configuration)
         self.assertIn("password_change:\n    disable: true", configuration)
         self.assertIn("disable_healthcheck: true", configuration)
         self.assertIn("password_reset:\n    disable: true", configuration)
@@ -97,10 +119,36 @@ class PortfolioSsoContractTests(unittest.TestCase):
         self.assertNotIn("'--password'", library)
         self.assertIn('id="password-form"', page)
 
+    def test_canonical_role_contract_is_shared_by_bootstrap_and_admin(self) -> None:
+        contract = json.loads(
+            (ROOT / "ops/sso/role-contract.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            contract,
+            {
+                "version": 1,
+                "header": "Remote-Groups",
+                "separator": ",",
+                "roles": ["user", "developer", "admin"],
+                "administratorRole": "admin",
+                "hierarchy": "prefix",
+            },
+        )
+        example = (ROOT / "ops/sso/users_database.example.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("      - user\n      - developer\n      - admin\n", example)
+        self.assertNotIn("      - owners\n", example)
+        self.assertNotIn("      - users\n", example)
+
     def test_runtime_image_is_pinned_and_contains_admin_runtime(self) -> None:
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
         self.assertEqual(dockerfile.count("node:22-bookworm-slim@sha256:"), 2)
         self.assertIn("COPY --from=authelia /app/authelia /usr/local/bin/authelia", dockerfile)
+        self.assertIn(
+            "COPY ops/sso/role-contract.json ./ops/sso/role-contract.json",
+            dockerfile,
+        )
         self.assertIn("RUN test -x /usr/bin/script", dockerfile)
         self.assertIn('CMD ["node", "ops/sso/admin/landing.mjs"]', dockerfile)
 

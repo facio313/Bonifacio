@@ -44,7 +44,7 @@ access_control:
         - www.bonifacio.work
       resources:
         - '^/sso/admin(?:[/?].*)?$'
-      subject: group:owners
+      subject: group:admin
       policy: one_factor
     - domain:
         - bonifacio.work
@@ -52,10 +52,45 @@ access_control:
       resources:
         - '^/sso/admin(?:[/?].*)?$'
       policy: deny
-    - domain: bonifacio.work
+    - domain:
+        - bonifacio.work
+        - www.bonifacio.work
+      resources:
+        - '^/monitor(?:[/?].*)?$'
+      subject: group:developer
       policy: one_factor
-    - domain: www.bonifacio.work
+    - domain:
+        - bonifacio.work
+        - www.bonifacio.work
+      resources:
+        - '^/monitor(?:[/?].*)?$'
+      policy: deny
+    - domain:
+        - bonifacio.work
+        - www.bonifacio.work
+      resources: &user-protected-resources
+        - '^/(?:\?.*)?$'
+        - '^/index\.html(?:\?.*)?$'
+        - '^/assets(?:[/?].*)?$'
+        - '^/react(?:[/?].*)?$'
+        - '^/vue(?:[/?].*)?$'
+        - '^/dukkeobi(?:[/?].*)?$'
+        - '^/ddit-finalproject(?:[/?].*)?$'
+        - '^/pilgrimage(?:[/?].*)?$'
+        - '^/api(?:[/?].*)?$'
+        - '^/multtara(?:[/?].*)?$'
+        - '^/feelmyrythm(?:[/?].*)?$'
+      subject: group:user
       policy: one_factor
+    - domain:
+        - bonifacio.work
+        - www.bonifacio.work
+      resources: *user-protected-resources
+      policy: deny
+    - domain:
+        - bonifacio.work
+        - www.bonifacio.work
+      policy: deny
 
 session:
   name: bonifacio_sso_session

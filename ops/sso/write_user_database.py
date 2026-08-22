@@ -15,6 +15,27 @@ USERNAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}\Z")
 ARGON2ID = re.compile(
     r"\$argon2id\$v=19\$m=\d+,t=\d+,p=\d+\$[A-Za-z0-9+/]+\$[A-Za-z0-9+/]+\Z"
 )
+ROLE_CONTRACT_PATH = Path(__file__).with_name("role-contract.json")
+
+
+def load_bootstrap_roles() -> tuple[str, ...]:
+    try:
+        contract = json.loads(ROLE_CONTRACT_PATH.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("central SSO role contract is unreadable") from exc
+    if contract != {
+        "version": 1,
+        "header": "Remote-Groups",
+        "separator": ",",
+        "roles": ["user", "developer", "admin"],
+        "administratorRole": "admin",
+        "hierarchy": "prefix",
+    }:
+        raise RuntimeError("central SSO role contract is invalid")
+    return tuple(contract["roles"])
+
+
+BOOTSTRAP_ROLES = load_bootstrap_roles()
 
 
 def yaml_string(value: str) -> str:
@@ -44,6 +65,7 @@ def write_database(
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     fd = os.open(path, flags, 0o600)
+    role_lines = "".join(f"      - {role}\n" for role in BOOTSTRAP_ROLES)
     payload = (
         "---\n"
         "users:\n"
@@ -53,8 +75,7 @@ def write_database(
         f"    password: {yaml_string(digest)}\n"
         f"    email: {yaml_string(email)}\n"
         "    groups:\n"
-        "      - owners\n"
-        "      - users\n"
+        f"{role_lines}"
     )
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:

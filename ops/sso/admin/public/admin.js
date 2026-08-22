@@ -8,6 +8,13 @@ const passwordSubmit = document.querySelector('#password-submit');
 const credentialDialog = document.querySelector('#credential-dialog');
 const credentialUsername = document.querySelector('#credential-username');
 const credentialPassword = document.querySelector('#credential-password');
+const createRolesRoot = document.querySelector('#create-roles');
+const ROLE_NAMES = ['user', 'developer', 'admin'];
+const ROLE_LABELS = {
+  user: 'user · 일반 서비스 이용',
+  developer: 'developer · 개발 기능 이용',
+  admin: 'admin · 중앙 사용자 관리',
+};
 
 function showMessage(text, tone = 'success') {
   message.textContent = text;
@@ -39,6 +46,59 @@ function input(labelText, value, type = 'text') {
   return { label, field };
 }
 
+function roleControls(selectedRoles = ['user']) {
+  const fieldset = document.createElement('fieldset');
+  fieldset.className = 'role-fieldset';
+  const legend = document.createElement('legend');
+  legend.textContent = '중앙 역할';
+  const grid = document.createElement('div');
+  grid.className = 'role-grid';
+  const inputs = new Map();
+
+  for (const role of ROLE_NAMES) {
+    const label = document.createElement('label');
+    label.className = 'check-row';
+    const field = document.createElement('input');
+    field.type = 'checkbox';
+    field.value = role;
+    field.checked = selectedRoles.includes(role);
+    field.defaultChecked = field.checked;
+    field.disabled = role === 'user';
+    label.append(field, document.createTextNode(` ${ROLE_LABELS[role]}`));
+    inputs.set(role, field);
+    grid.append(label);
+  }
+
+  const synchronize = (changedRole) => {
+    const user = inputs.get('user');
+    const developer = inputs.get('developer');
+    const admin = inputs.get('admin');
+    user.checked = true;
+    if (changedRole === 'admin' && admin.checked) developer.checked = true;
+    if (changedRole === 'developer' && !developer.checked) admin.checked = false;
+  };
+  for (const [role, field] of inputs) {
+    field.addEventListener('change', () => synchronize(role));
+  }
+  synchronize();
+  fieldset.append(legend, grid);
+  return {
+    element: fieldset,
+    value: () => ROLE_NAMES.filter((role) => inputs.get(role).checked),
+    set: (roles) => {
+      for (const role of ROLE_NAMES) {
+        const checked = roles.includes(role);
+        inputs.get(role).checked = checked;
+        inputs.get(role).defaultChecked = checked;
+      }
+      synchronize();
+    },
+  };
+}
+
+const createRoleControls = roleControls();
+createRolesRoot.replaceChildren(createRoleControls.element);
+
 function showCredential(username, password) {
   credentialUsername.textContent = username;
   credentialPassword.textContent = password;
@@ -61,7 +121,7 @@ function renderUsers() {
     badge.textContent = user.disabled ? '비활성' : '활성';
     identity.append(title, badge);
     const groups = document.createElement('small');
-    groups.textContent = user.groups.includes('owners') ? '관리자' : '일반 사용자';
+    groups.textContent = user.groups.join(' · ');
     heading.append(identity, groups);
 
     const form = document.createElement('form');
@@ -69,12 +129,7 @@ function renderUsers() {
     const displayName = input('표시 이름', user.displayName);
     const email = input('이메일 (변경하려면 새 계정을 발급하세요)', user.email, 'email');
     email.field.disabled = true;
-    const ownerLabel = document.createElement('label');
-    ownerLabel.className = 'check-row';
-    const ownerInput = document.createElement('input');
-    ownerInput.type = 'checkbox';
-    ownerInput.checked = user.groups.includes('owners');
-    ownerLabel.append(ownerInput, document.createTextNode(' 관리자 권한'));
+    const roles = roleControls(user.groups);
     const disabledLabel = document.createElement('label');
     disabledLabel.className = 'check-row';
     const disabledInput = document.createElement('input');
@@ -92,7 +147,7 @@ function renderUsers() {
     reset.className = 'secondary';
     reset.textContent = '임시 비밀번호 재발급';
     actions.append(save, reset);
-    form.append(displayName.label, email.label, ownerLabel, disabledLabel, actions);
+    form.append(displayName.label, email.label, roles.element, disabledLabel, actions);
 
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -102,7 +157,7 @@ function renderUsers() {
           method: 'PATCH',
           body: JSON.stringify({
             displayName: displayName.field.value,
-            owner: ownerInput.checked,
+            roles: roles.value(),
             disabled: disabledInput.checked,
           }),
         });
@@ -184,12 +239,13 @@ createForm.addEventListener('submit', async (event) => {
         username: data.get('username'),
         displayName: data.get('displayName'),
         email: data.get('email'),
-        owner: data.get('owner') === 'on',
+        roles: createRoleControls.value(),
       }),
     });
     showCredential(payload.user.username, payload.temporaryPassword);
     showMessage(`${payload.user.username} 계정을 만들었습니다.`);
     createForm.reset();
+    createRoleControls.set(['user']);
     await loadUsers();
   } catch (error) {
     showMessage(error.message, 'error');

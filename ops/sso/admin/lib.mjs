@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { constants as fileConstants } from 'node:fs';
+import { constants as fileConstants, readFileSync } from 'node:fs';
 import {
   chmod,
   copyFile,
@@ -20,7 +20,6 @@ import YAML from 'yaml';
 const USERNAME = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const GROUP = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const ARGON2ID = /^\$argon2id\$v=19\$m=\d+,t=\d+,p=\d+\$[A-Za-z0-9+/]+\$[A-Za-z0-9+/]+$/;
-const ALLOWED_GROUPS = new Set(['owners', 'users']);
 const PASSWORD_MIN_LENGTH = 4;
 const PASSWORD_MAX_LENGTH = 128;
 const PASSWORD_PROMPT = 'Enter Password:';
@@ -32,6 +31,40 @@ const VERIFY_PASSWORD_COMMAND = [
   'stty cols 160 rows 40',
   'exec "$AUTHELIA_BINARY" crypto hash validate -- "$AUTHELIA_PASSWORD_DIGEST"',
 ].join('; ');
+
+function loadRoleContract() {
+  let value;
+  try {
+    value = JSON.parse(
+      readFileSync(new URL('../role-contract.json', import.meta.url), 'utf8'),
+    );
+  } catch {
+    throw new Error('The central SSO role contract cannot be loaded.');
+  }
+  const expectedRoles = ['user', 'developer', 'admin'];
+  if (
+    !plainObject(value)
+    || value.version !== 1
+    || value.header !== 'Remote-Groups'
+    || value.separator !== ','
+    || value.administratorRole !== 'admin'
+    || value.hierarchy !== 'prefix'
+    || !Array.isArray(value.roles)
+    || value.roles.length !== expectedRoles.length
+    || value.roles.some((role, index) => role !== expectedRoles[index])
+  ) {
+    throw new Error('The central SSO role contract is invalid.');
+  }
+  return Object.freeze({
+    ...value,
+    roles: Object.freeze([...value.roles]),
+  });
+}
+
+export const ROLE_CONTRACT = loadRoleContract();
+export const ROLE_NAMES = ROLE_CONTRACT.roles;
+export const ADMIN_ROLE = ROLE_CONTRACT.administratorRole;
+const ALLOWED_ROLES = new Set(ROLE_NAMES);
 
 export class AdminError extends Error {
   constructor(status, code, message) {
@@ -104,15 +137,44 @@ export function normalizePassword(value, field = '새 비밀번호', minimumLeng
   return value;
 }
 
-function normalizeGroups(value) {
+export function normalizeRoles(
+  value,
+  {
+    status = 400,
+    code = 'invalid_roles',
+    message = '중앙 역할 구성이 올바르지 않습니다.',
+  } = {},
+) {
+  const fail = () => {
+    throw new AdminError(status, code, message);
+  };
   if (!Array.isArray(value) || value.length === 0) {
-    throw new AdminError(400, 'invalid_groups', '사용자 그룹이 하나 이상 필요합니다.');
+    fail();
   }
-  const groups = [...new Set(value.map((item) => cleanText(item, '그룹', 64).toLowerCase()))];
-  if (groups.some((group) => !GROUP.test(group) || !ALLOWED_GROUPS.has(group))) {
-    throw new AdminError(400, 'invalid_groups', '허용되지 않은 사용자 그룹입니다.');
+  const roles = [];
+  const seen = new Set();
+  for (const item of value) {
+    if (
+      typeof item !== 'string'
+      || item !== item.trim().toLowerCase()
+      || !GROUP.test(item)
+      || !ALLOWED_ROLES.has(item)
+      || seen.has(item)
+    ) {
+      fail();
+    }
+    seen.add(item);
+    roles.push(item);
   }
-  return groups.sort();
+  const highestIndex = Math.max(...roles.map((role) => ROLE_NAMES.indexOf(role)));
+  const expected = ROLE_NAMES.slice(0, highestIndex + 1);
+  if (
+    roles.length !== expected.length
+    || roles.some((role, index) => role !== expected[index])
+  ) {
+    fail();
+  }
+  return roles;
 }
 
 function normalizeRecord(username, value) {
@@ -131,7 +193,11 @@ function normalizeRecord(username, value) {
     displayname: normalizeDisplayName(value.displayname),
     password: value.password,
     email: normalizeEmail(value.email),
-    groups: normalizeGroups(value.groups ?? ['users']),
+    groups: normalizeRoles(value.groups, {
+      status: 500,
+      code: 'invalid_database',
+      message: `${username} 사용자의 중앙 역할 구성이 올바르지 않습니다.`,
+    }),
   };
 }
 
@@ -195,34 +261,41 @@ export function publicUsers(database) {
     }));
 }
 
-export function assertOwnerMutationAllowed(database, actor, target, nextRecord) {
+export function assertAdminMutationAllowed(database, actor, target, nextRecord) {
   const current = database.users[target];
   if (!current) throw new AdminError(404, 'user_not_found', '사용자를 찾을 수 없습니다.');
-  const wasOwner = current.groups.includes('owners') && !current.disabled;
-  const remainsOwner = nextRecord.groups.includes('owners') && !nextRecord.disabled;
-  if (actor === target && !remainsOwner) {
+  const wasAdmin = current.groups.includes(ADMIN_ROLE) && !current.disabled;
+  const remainsAdmin = nextRecord.groups.includes(ADMIN_ROLE) && !nextRecord.disabled;
+  if (actor === target && !remainsAdmin) {
     throw new AdminError(409, 'self_lockout', '현재 로그인한 관리자 권한은 제거할 수 없습니다.');
   }
-  if (wasOwner && !remainsOwner) {
-    const otherEnabledOwners = Object.entries(database.users).filter(
+  if (wasAdmin && !remainsAdmin) {
+    const otherEnabledAdmins = Object.entries(database.users).filter(
       ([username, record]) =>
-        username !== target && !record.disabled && record.groups.includes('owners'),
+        username !== target && !record.disabled && record.groups.includes(ADMIN_ROLE),
     );
-    if (otherEnabledOwners.length === 0) {
-      throw new AdminError(409, 'last_owner', '마지막 활성 관리자는 비활성화할 수 없습니다.');
+    if (otherEnabledAdmins.length === 0) {
+      throw new AdminError(409, 'last_admin', '마지막 활성 관리자는 비활성화할 수 없습니다.');
     }
   }
 }
 
-export function assertAuthorizedOwner(database, actor) {
+export function assertAuthorizedAdmin(database, actor) {
   const record = database.users[actor.username];
+  const actorRoles = normalizeRoles(actor.groups, {
+    status: 403,
+    code: 'admin_required',
+    message: '사용자 관리 권한이 없습니다.',
+  });
   if (
     !record ||
     record.disabled ||
-    !record.groups.includes('owners') ||
-    record.email !== actor.email.trim().toLowerCase()
+    !record.groups.includes(ADMIN_ROLE) ||
+    record.email !== actor.email ||
+    record.groups.length !== actorRoles.length ||
+    record.groups.some((role, index) => role !== actorRoles[index])
   ) {
-    throw new AdminError(403, 'owner_required', '사용자 관리 권한이 없습니다.');
+    throw new AdminError(403, 'admin_required', '사용자 관리 권한이 없습니다.');
   }
 }
 
@@ -643,8 +716,4 @@ export async function verifyPassword(
   if (lines[1] === 'The password does not match the digest.') return false;
   if (lines[1] === 'The password matches the digest.') return true;
   throw passwordProcessingError();
-}
-
-export function groupsForOwner(owner) {
-  return owner ? ['owners', 'users'] : ['users'];
 }

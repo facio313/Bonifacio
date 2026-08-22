@@ -13,16 +13,17 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
+  ADMIN_ROLE,
   AdminError,
   UserStore,
-  assertAuthorizedOwner,
-  assertOwnerMutationAllowed,
+  assertAdminMutationAllowed,
+  assertAuthorizedAdmin,
   generateTemporaryCredential,
-  groupsForOwner,
   hashPassword,
   normalizeDisplayName,
   normalizeEmail,
   normalizePassword,
+  normalizeRoles,
   normalizeUsername,
   publicUsers,
   verifyPassword,
@@ -66,26 +67,53 @@ function header(request, name) {
 }
 
 export function identity(request) {
-  const username = header(request, 'remote-user').trim();
-  const groups = header(request, 'remote-groups')
-    .split(',')
-    .map((group) => group.trim())
-    .filter(Boolean);
-  if (!username) throw new AdminError(401, 'authentication_required', '중앙 로그인이 필요합니다.');
-  if (!groups.includes('owners')) {
-    throw new AdminError(403, 'owner_required', '사용자 관리 권한이 없습니다.');
+  const invalidIdentity = () => new AdminError(
+    401,
+    'invalid_identity',
+    '중앙 로그인 정보를 확인할 수 없습니다.',
+  );
+  const rawUsername = header(request, 'remote-user').trim();
+  if (!rawUsername) {
+    throw new AdminError(401, 'authentication_required', '중앙 로그인이 필요합니다.');
+  }
+  let username;
+  let email;
+  let groups;
+  try {
+    username = normalizeUsername(rawUsername);
+    email = normalizeEmail(header(request, 'remote-email'));
+    const rawGroups = header(request, 'remote-groups');
+    groups = normalizeRoles(rawGroups.split(','), {
+      status: 401,
+      code: 'invalid_identity',
+      message: '중앙 로그인 역할을 확인할 수 없습니다.',
+    });
+    if (rawGroups !== groups.join(',')) throw invalidIdentity();
+  } catch (error) {
+    if (error instanceof AdminError && error.code === 'invalid_identity') throw error;
+    throw invalidIdentity();
+  }
+  if (username !== rawUsername || email !== header(request, 'remote-email')) {
+    throw invalidIdentity();
+  }
+  const displayName = header(request, 'remote-name').trim();
+  if (displayName.length > 120 || /[\u0000-\u001f\u007f]/.test(displayName)) {
+    throw invalidIdentity();
+  }
+  if (!groups.includes(ADMIN_ROLE)) {
+    throw new AdminError(403, 'admin_required', '사용자 관리 권한이 없습니다.');
   }
   return {
     username,
-    displayName: header(request, 'remote-name').trim(),
-    email: header(request, 'remote-email').trim(),
+    displayName,
+    email,
     groups,
   };
 }
 
 async function authorizedIdentity(request, store) {
   const actor = identity(request);
-  assertAuthorizedOwner(await store.read(), actor);
+  assertAuthorizedAdmin(await store.read(), actor);
   return actor;
 }
 
@@ -267,7 +295,7 @@ async function handleApi(request, response, url, dependencies) {
       target: actor.username,
       expectedRevision,
       transform: async (database) => {
-        assertAuthorizedOwner(database, actor);
+        assertAuthorizedAdmin(database, actor);
         const current = database.users[actor.username];
         if (!await dependencies.verifyCredential(currentPassword, current.password)) {
           throw new AdminError(400, 'current_password_invalid', '현재 비밀번호가 맞지 않습니다.');
@@ -287,11 +315,11 @@ async function handleApi(request, response, url, dependencies) {
   if (request.method === 'POST' && url.pathname === `${BASE}/api/users`) {
     const expectedRevision = requiredRevision(request);
     const body = await jsonBody(request);
-    requireExactBody(body, ['username', 'displayName', 'email', 'owner']);
+    requireExactBody(body, ['username', 'displayName', 'email', 'roles']);
     const username = normalizeUsername(body.username);
     const email = normalizeEmail(body.email);
     const displayName = normalizeDisplayName(body.displayName);
-    const owner = requireBoolean(body.owner, '관리자 권한');
+    const roles = normalizeRoles(body.roles);
     let credential;
     await dependencies.store.mutate({
       actor: actor.username,
@@ -299,7 +327,7 @@ async function handleApi(request, response, url, dependencies) {
       target: username,
       expectedRevision,
       transform: async (database) => {
-        assertAuthorizedOwner(database, actor);
+        assertAuthorizedAdmin(database, actor);
         if (database.users[username]) throw new AdminError(409, 'username_exists', '이미 사용 중인 아이디입니다.');
         if (Object.values(database.users).some((user) => user.email === email)) {
           throw new AdminError(409, 'email_exists', '이미 사용 중인 이메일입니다.');
@@ -310,7 +338,7 @@ async function handleApi(request, response, url, dependencies) {
           displayname: displayName,
           password: credential.digest,
           email,
-          groups: groupsForOwner(owner),
+          groups: roles,
         };
       },
     });
@@ -329,9 +357,9 @@ async function handleApi(request, response, url, dependencies) {
     const expectedRevision = requiredRevision(request);
     const username = userMatch[1];
     const body = await jsonBody(request);
-    requireExactBody(body, ['displayName', 'owner', 'disabled']);
+    requireExactBody(body, ['displayName', 'roles', 'disabled']);
     const displayName = normalizeDisplayName(body.displayName);
-    const owner = requireBoolean(body.owner, '관리자 권한');
+    const roles = normalizeRoles(body.roles);
     const disabled = requireBoolean(body.disabled, '로그인 비활성화');
     await dependencies.store.mutate({
       actor: actor.username,
@@ -339,16 +367,16 @@ async function handleApi(request, response, url, dependencies) {
       target: username,
       expectedRevision,
       transform: async (database) => {
-        assertAuthorizedOwner(database, actor);
+        assertAuthorizedAdmin(database, actor);
         const current = database.users[username];
         if (!current) throw new AdminError(404, 'user_not_found', '사용자를 찾을 수 없습니다.');
         const next = {
           ...current,
           displayname: displayName,
           disabled,
-          groups: groupsForOwner(owner),
+          groups: roles,
         };
-        assertOwnerMutationAllowed(database, actor.username, username, next);
+        assertAdminMutationAllowed(database, actor.username, username, next);
         database.users[username] = next;
       },
     });
@@ -373,7 +401,7 @@ async function handleApi(request, response, url, dependencies) {
       target: username,
       expectedRevision,
       transform: async (database) => {
-        assertAuthorizedOwner(database, actor);
+        assertAuthorizedAdmin(database, actor);
         const user = database.users[username];
         if (!user) throw new AdminError(404, 'user_not_found', '사용자를 찾을 수 없습니다.');
         credential = await dependencies.generateCredential();

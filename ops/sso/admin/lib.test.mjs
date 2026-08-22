@@ -7,10 +7,12 @@ import test from 'node:test';
 
 import {
   AdminError,
+  ROLE_CONTRACT,
   UserStore,
-  assertAuthorizedOwner,
-  assertOwnerMutationAllowed,
+  assertAdminMutationAllowed,
+  assertAuthorizedAdmin,
   normalizePassword,
+  normalizeRoles,
   parseUserDatabase,
   publicUsers,
   serializeUserDatabase,
@@ -34,14 +36,14 @@ function database() {
         displayname: 'Owner',
         password: digest,
         email: 'owner@bonifacio.work',
-        groups: ['owners', 'users'],
+        groups: ['user', 'developer', 'admin'],
       },
       member: {
         disabled: false,
         displayname: 'Member',
         password: digest,
         email: 'member@example.com',
-        groups: ['users'],
+        groups: ['user'],
       },
     },
   };
@@ -73,7 +75,7 @@ test('database rejects duplicate YAML keys and unknown groups', () => {
     AdminError,
   );
   const unsafe = database();
-  unsafe.users.member.groups = ['owners-ish'];
+  unsafe.users.member.groups = ['user', 'auditor'];
   assert.throws(() => serializeUserDatabase(unsafe), AdminError);
   const duplicateEmail = database();
   duplicateEmail.users.member.email = 'owner@bonifacio.work';
@@ -93,32 +95,60 @@ test('database rejects duplicate YAML keys and unknown groups', () => {
   assert.throws(() => parseUserDatabase(unknownRoot), AdminError);
 });
 
-test('last owner and current administrator cannot lock themselves out', () => {
+test('central roles are strict hierarchy-closed prefixes', () => {
+  assert.deepEqual(ROLE_CONTRACT.roles, ['user', 'developer', 'admin']);
+  assert.deepEqual(normalizeRoles(['user', 'developer', 'admin']), ['user', 'developer', 'admin']);
+  for (const value of [
+    [],
+    ['developer'],
+    ['admin', 'user', 'developer'],
+    ['developer', 'user'],
+    ['user', 'admin'],
+    ['user', 'user'],
+    ['user', 'owners'],
+    ['user', ''],
+  ]) {
+    assert.throws(
+      () => normalizeRoles(value),
+      (error) => error instanceof AdminError && error.code === 'invalid_roles',
+    );
+  }
+});
+
+test('last admin and current administrator cannot lock themselves out', () => {
   const value = database();
-  const disabledOwner = { ...value.users.owner, disabled: true };
+  const disabledAdmin = { ...value.users.owner, disabled: true };
   assert.throws(
-    () => assertOwnerMutationAllowed(value, 'owner', 'owner', disabledOwner),
+    () => assertAdminMutationAllowed(value, 'owner', 'owner', disabledAdmin),
     (error) => error instanceof AdminError && error.code === 'self_lockout',
   );
   assert.throws(
-    () => assertOwnerMutationAllowed(value, 'another-owner', 'owner', disabledOwner),
-    (error) => error instanceof AdminError && error.code === 'last_owner',
+    () => assertAdminMutationAllowed(value, 'another-admin', 'owner', disabledAdmin),
+    (error) => error instanceof AdminError && error.code === 'last_admin',
   );
 });
 
 test('current administrator is revalidated against the locked database snapshot', () => {
   const value = database();
   assert.doesNotThrow(() =>
-    assertAuthorizedOwner(value, { username: 'owner', email: 'owner@bonifacio.work' }),
+    assertAuthorizedAdmin(value, {
+      username: 'owner',
+      email: 'owner@bonifacio.work',
+      groups: ['user', 'developer', 'admin'],
+    }),
   );
-  value.users.owner.groups = ['users'];
+  value.users.owner.groups = ['user', 'developer'];
   assert.throws(
-    () => assertAuthorizedOwner(value, { username: 'owner', email: 'owner@bonifacio.work' }),
-    (error) => error instanceof AdminError && error.code === 'owner_required',
+    () => assertAuthorizedAdmin(value, {
+      username: 'owner',
+      email: 'owner@bonifacio.work',
+      groups: ['user', 'developer', 'admin'],
+    }),
+    (error) => error instanceof AdminError && error.code === 'admin_required',
   );
 });
 
-test('identity requires an exact owners group and mutations require origin plus CSRF', () => {
+test('identity requires exact canonical admin roles and mutations require origin plus CSRF', () => {
   const edgeSecret = 'test-edge-secret-with-at-least-32-bytes';
   assert.throws(
     () => requireTrustedEdge({ headers: {} }, edgeSecret),
@@ -131,19 +161,42 @@ test('identity requires an exact owners group and mutations require origin plus 
     ),
   );
   assert.throws(
-    () => identity({ headers: { 'remote-user': 'owner', 'remote-groups': 'notowners' } }),
+    () => identity({ headers: {
+      'remote-user': 'owner',
+      'remote-email': 'owner@bonifacio.work',
+      'remote-groups': 'user,developer',
+    } }),
     (error) => error instanceof AdminError && error.status === 403,
   );
+  for (const groups of [
+    'user,developer,admin,admin',
+    'user,unknown,admin',
+    'user,,developer,admin',
+    'user, developer,admin',
+    'user,developer,admin ',
+    'admin,developer,user',
+  ]) {
+    assert.throws(
+      () => identity({ headers: {
+        'remote-user': 'owner',
+        'remote-email': 'owner@bonifacio.work',
+        'remote-groups': groups,
+      } }),
+      (error) => error instanceof AdminError && error.code === 'invalid_identity',
+    );
+  }
   const request = {
     headers: {
       'remote-user': 'owner',
-      'remote-groups': 'users,owners',
+      'remote-email': 'owner@bonifacio.work',
+      'remote-groups': 'user,developer,admin',
       origin: 'https://bonifacio.work',
       cookie: 'bonifacio_admin_csrf=known-token',
       'x-csrf-token': 'known-token',
     },
   };
   assert.equal(identity(request).username, 'owner');
+  assert.deepEqual(identity(request).groups, ['user', 'developer', 'admin']);
   assert.doesNotThrow(() => requireMutationProtection(request));
   assert.throws(
     () => requireMutationProtection({ ...request, headers: { ...request.headers, origin: 'https://evil.invalid' } }),
@@ -224,7 +277,7 @@ test('admin API creates and lists a redacted account through all authentication 
     const identityHeaders = {
       'Remote-User': 'owner',
       'Remote-Email': 'owner@bonifacio.work',
-      'Remote-Groups': 'users,owners',
+      'Remote-Groups': 'user,developer,admin',
       'X-Portfolio-Edge-Secret': edgeSecret,
     };
     const sessionResponse = await fetch(`${base}/session`, { headers: identityHeaders });
@@ -252,12 +305,13 @@ test('admin API creates and lists a redacted account through all authentication 
         username: 'new-member',
         displayName: 'New Member',
         email: 'new-member@example.com',
-        owner: false,
+        roles: ['user', 'developer'],
       }),
     });
     assert.equal(createResponse.status, 201);
     const created = await createResponse.json();
     assert.equal(created.temporaryPassword, temporaryPassword);
+    assert.deepEqual(created.user.groups, ['user', 'developer']);
     assert.match(created.revision, /^[a-f0-9]{64}$/);
     assert.equal(JSON.stringify(created).includes(digest), false);
 
@@ -268,6 +322,27 @@ test('admin API creates and lists a redacted account through all authentication 
     assert.equal(JSON.stringify(listed).includes('password'), false);
     assert.equal(JSON.stringify(listed).includes('argon2'), false);
 
+    const promoteResponse = await fetch(`${base}/users/new-member`, {
+      method: 'PATCH',
+      headers: {
+        ...identityHeaders,
+        'Content-Type': 'application/json',
+        Cookie: cookie,
+        Origin: 'https://bonifacio.work',
+        'X-CSRF-Token': session.csrfToken,
+        'If-Match': created.revision,
+      },
+      body: JSON.stringify({
+        displayName: 'New Member',
+        roles: ['user', 'developer', 'admin'],
+        disabled: false,
+      }),
+    });
+    assert.equal(promoteResponse.status, 200);
+    const promoted = await promoteResponse.json();
+    assert.deepEqual(promoted.user.groups, ['user', 'developer', 'admin']);
+    assert.match(promoted.revision, /^[a-f0-9]{64}$/);
+
     const wrongCurrentResponse = await fetch(`${base}/account/password`, {
       method: 'POST',
       headers: {
@@ -276,7 +351,7 @@ test('admin API creates and lists a redacted account through all authentication 
         Cookie: cookie,
         Origin: 'https://bonifacio.work',
         'X-CSRF-Token': session.csrfToken,
-        'If-Match': created.revision,
+        'If-Match': promoted.revision,
       },
       body: JSON.stringify({
         currentPassword: 'wrong-owner-password',
@@ -295,7 +370,7 @@ test('admin API creates and lists a redacted account through all authentication 
         Cookie: cookie,
         Origin: 'https://bonifacio.work',
         'X-CSRF-Token': session.csrfToken,
-        'If-Match': created.revision,
+        'If-Match': promoted.revision,
       },
       body: JSON.stringify({
         currentPassword: 'current-owner-password',
@@ -323,9 +398,27 @@ test('admin API creates and lists a redacted account through all authentication 
         'X-CSRF-Token': session.csrfToken,
         'If-Match': created.revision,
       },
-      body: JSON.stringify({ displayName: 'Member', owner: false, disabled: 'false' }),
+      body: JSON.stringify({ displayName: 'Member', roles: ['user'], disabled: 'false' }),
     });
     assert.equal(invalidDisabledResponse.status, 400);
+
+    const invalidRolesResponse = await fetch(`${base}/users/member`, {
+      method: 'PATCH',
+      headers: {
+        ...identityHeaders,
+        'Content-Type': 'application/json',
+        Cookie: cookie,
+        Origin: 'https://bonifacio.work',
+        'X-CSRF-Token': session.csrfToken,
+        'If-Match': changed.revision,
+      },
+      body: JSON.stringify({
+        displayName: 'Member',
+        roles: ['user', 'admin'],
+        disabled: false,
+      }),
+    });
+    assert.equal(invalidRolesResponse.status, 400);
 
     const staleResponse = await fetch(`${base}/users/member`, {
       method: 'PATCH',
@@ -337,7 +430,7 @@ test('admin API creates and lists a redacted account through all authentication 
         'X-CSRF-Token': session.csrfToken,
         'If-Match': initialList.revision,
       },
-      body: JSON.stringify({ displayName: 'Stale edit', owner: false, disabled: false }),
+      body: JSON.stringify({ displayName: 'Stale edit', roles: ['user'], disabled: false }),
     });
     assert.equal(staleResponse.status, 409);
 
@@ -351,7 +444,7 @@ test('admin API creates and lists a redacted account through all authentication 
   }
 });
 
-test('admin mutation rechecks owner state before spawning a password hash', async () => {
+test('admin mutation rechecks central admin state before spawning a password hash', async () => {
   const edgeSecret = 'test-edge-secret-with-at-least-32-bytes';
   let generated = 0;
   const store = {
@@ -363,7 +456,7 @@ test('admin mutation rechecks owner state before spawning a password hash', asyn
     },
     async mutate({ transform }) {
       const locked = database();
-      locked.users.owner.groups = ['users'];
+      locked.users.owner.groups = ['user', 'developer'];
       await transform(locked);
     },
   };
@@ -386,7 +479,7 @@ test('admin mutation rechecks owner state before spawning a password hash', asyn
     const headers = {
       'Remote-User': 'owner',
       'Remote-Email': 'owner@bonifacio.work',
-      'Remote-Groups': 'users,owners',
+      'Remote-Groups': 'user,developer,admin',
       'X-Portfolio-Edge-Secret': edgeSecret,
     };
     const sessionResponse = await fetch(`${base}/session`, { headers });
@@ -406,7 +499,7 @@ test('admin mutation rechecks owner state before spawning a password hash', asyn
         username: 'blocked-user',
         displayName: 'Blocked User',
         email: 'blocked@example.com',
-        owner: false,
+        roles: ['user'],
       }),
     });
     assert.equal(response.status, 403);
