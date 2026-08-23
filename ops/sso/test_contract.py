@@ -9,46 +9,45 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class PortfolioSsoContractTests(unittest.TestCase):
-    def test_compose_pins_private_sso_services_and_persistent_state(self) -> None:
+    def test_compose_runs_authentication_and_administration_as_one_service(self) -> None:
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
         redis = compose.split("  bonifacioSsoRedis:\n", 1)[1].split(
             "\n  bonifacioSso:\n", 1
         )[0]
-        authelia = compose.split("  bonifacioSso:\n", 1)[1].split(
-            "\n  bonifacioSsoAdmin:\n", 1
-        )[0]
-        admin = compose.split("  bonifacioSsoAdmin:\n", 1)[1].split(
+        sso = compose.split("  bonifacioSso:\n", 1)[1].split(
             "\n  bonifacio:\n", 1
         )[0]
         landing = compose.split("\n  bonifacio:\n", 1)[1]
 
-        self.assertIn("127.0.0.1:${BONIFACIO_SSO_PORT:-9091}:9091", authelia)
+        self.assertNotIn("\n  bonifacioSsoAdmin:\n", compose)
+        self.assertIn("image: ${BONIFACIO_IMAGE", sso)
+        self.assertIn('command: ["node", "ops/sso/combined.mjs"]', sso)
+        self.assertIn("127.0.0.1:${BONIFACIO_SSO_PORT:-9091}:9091", sso)
+        self.assertIn("127.0.0.1:${BONIFACIO_SSO_ADMIN_PORT:-9092}:9092", sso)
         self.assertNotIn("ports:", redis)
-        self.assertIn("bonifacio_sso_data:/data", authelia)
+        self.assertIn("bonifacio_sso_data:/data", sso)
         self.assertIn("bonifacio_sso_redis_data:/data", redis)
-        self.assertIn("cap_drop:\n      - ALL", authelia)
-        self.assertNotIn("cap_add:", authelia)
-        self.assertIn("read_only: true", authelia)
-        self.assertIn('entrypoint: ["/app/authelia"]', authelia)
-        self.assertIn('user: "0:0"', authelia)
-        self.assertIn("http://127.0.0.1:9091/sso/api/health", authelia)
-        self.assertIn("target: /config/users", authelia)
-        self.assertIn("read_only: true", authelia.split("target: /config/users", 1)[1])
-        self.assertIn("127.0.0.1:${BONIFACIO_SSO_ADMIN_PORT:-9092}:9092", admin)
-        self.assertIn("USERS_DATABASE_PATH: /data/users/current/users_database.yml", admin)
-        self.assertIn("target: /data/users", admin)
-        self.assertIn("ADMIN_EDGE_SECRET_FILE: /run/secrets/bonifacio_sso_admin_edge_secret", admin)
-        self.assertIn("bonifacio_sso_admin_edge_secret", admin)
-        self.assertIn('user: "0:0"', admin)
-        self.assertIn("read_only: true", admin)
-        self.assertIn("cap_drop:\n      - ALL", admin)
+        self.assertIn("cap_drop:\n      - ALL", sso)
+        self.assertNotIn("cap_add:", sso)
+        self.assertIn("read_only: true", sso)
+        self.assertIn('user: "0:0"', sso)
+        self.assertIn("http://127.0.0.1:9091/sso/api/health", sso)
+        self.assertIn("http://127.0.0.1:9092/healthz", sso)
+        self.assertIn("target: /config/users", sso)
+        self.assertIn("read_only: true", sso.split("target: /config/users", 1)[1])
+        self.assertIn("USERS_DATABASE_PATH: /data/users/current/users_database.yml", sso)
+        self.assertIn("SSO_AUTHELIA_BINARY: /usr/local/bin/authelia", sso)
+        self.assertNotIn("\n      AUTHELIA_BINARY:", sso)
+        self.assertIn("target: /data/users", sso)
+        self.assertIn("ADMIN_EDGE_SECRET_FILE: /run/secrets/bonifacio_sso_admin_edge_secret", sso)
+        for secret in (
+            "authelia_session_secret",
+            "authelia_storage_encryption_key",
+            "bonifacio_sso_admin_edge_secret",
+        ):
+            self.assertIn(secret, sso)
         self.assertIn("fetch('http://127.0.0.1:80/')", landing)
         self.assertNotIn("wget", landing)
-        self.assertIn(
-            "authelia/authelia:4.39.20@sha256:"
-            "68277b28658a69bb3f512c2c23c41c7df7d9311d0e506e64e26c96dcd75d0539",
-            authelia,
-        )
         self.assertIn(
             "redis:8.2.7-alpine@sha256:"
             "223b183cbc49f5ff48728e1fc52ccf101f05072decad2bd9867281a3c9bf75fd",
@@ -144,12 +143,19 @@ class PortfolioSsoContractTests(unittest.TestCase):
     def test_runtime_image_is_pinned_and_contains_admin_runtime(self) -> None:
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
         self.assertEqual(dockerfile.count("node:22-bookworm-slim@sha256:"), 2)
+        self.assertIn(
+            "authelia/authelia:4.39.20@sha256:"
+            "68277b28658a69bb3f512c2c23c41c7df7d9311d0e506e64e26c96dcd75d0539",
+            dockerfile,
+        )
         self.assertIn("COPY --from=authelia /app/authelia /usr/local/bin/authelia", dockerfile)
+        self.assertIn("COPY ops/sso/combined.mjs ./ops/sso/combined.mjs", dockerfile)
         self.assertIn(
             "COPY ops/sso/role-contract.json ./ops/sso/role-contract.json",
             dockerfile,
         )
         self.assertIn("RUN test -x /usr/bin/script", dockerfile)
+        self.assertIn("EXPOSE 80 9091 9092", dockerfile)
         self.assertIn('CMD ["node", "ops/sso/admin/landing.mjs"]', dockerfile)
 
 

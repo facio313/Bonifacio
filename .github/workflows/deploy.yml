@@ -24,7 +24,8 @@ jobs:
     name: Build ARM64 image and deploy
     runs-on: ubuntu-24.04-arm
     # The restricted host may wait up to 20 minutes for the fleet-wide deploy
-    # lock, then pulls and verifies two services. Do not interrupt it mid-cutover.
+    # lock, then replaces and verifies the unified SSO plus landing services.
+    # Do not interrupt it mid-cutover.
     timeout-minutes: 60
 
     steps:

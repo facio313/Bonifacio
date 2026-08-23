@@ -37,14 +37,15 @@ COPY package*.json ./
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 COPY --from=builder /app/dist ./dist
 COPY --from=authelia /app/authelia /usr/local/bin/authelia
+COPY ops/sso/combined.mjs ./ops/sso/combined.mjs
 COPY ops/sso/admin ./ops/sso/admin
 COPY ops/sso/role-contract.json ./ops/sso/role-contract.json
 COPY scripts/portfolio-auth-mode.sh ./scripts/portfolio-auth-mode.sh
 
-RUN test -x /usr/bin/script
+RUN test -x /usr/bin/script && test -x /usr/local/bin/authelia
 RUN chown -R node:node /app
 USER node
 
-EXPOSE 80 9092
+EXPOSE 80 9091 9092
 ENTRYPOINT ["./scripts/portfolio-auth-mode.sh", "exec", "--"]
 CMD ["node", "ops/sso/admin/landing.mjs"]
