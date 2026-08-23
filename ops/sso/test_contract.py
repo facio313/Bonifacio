@@ -71,6 +71,36 @@ class PortfolioSsoContractTests(unittest.TestCase):
         for header in ("Remote-User", "Remote-Email", "Remote-Name", "Remote-Groups"):
             self.assertIn(f"proxy_set_header {header} $bonifacio_sso_", auth)
 
+    def test_public_blog_proxy_strips_identity_and_rebuilds_forwarded_headers(self) -> None:
+        blog = (ROOT / "ops/sso/nginx/blog-public.conf").read_text(encoding="utf-8")
+        landing = (ROOT / "src/components/sections/Blog.tsx").read_text(encoding="utf-8")
+
+        self.assertIn("location = /blog {", blog)
+        self.assertIn("return 308 /blog/;", blog)
+        self.assertIn("location ^~ /blog/ {", blog)
+        self.assertEqual(blog.count("proxy_pass "), 1)
+        self.assertIn("proxy_pass http://127.0.0.1:5176;", blog)
+        self.assertNotIn("auth_request", blog)
+        self.assertNotIn("$proxy_add_x_forwarded_for", blog)
+        self.assertNotIn("0.0.0.0", blog)
+        for header in ("Remote-User", "Remote-Email", "Remote-Name", "Remote-Groups"):
+            self.assertIn(f'proxy_set_header {header} "";', blog)
+        for directive in (
+            "proxy_set_header Host $host;",
+            "proxy_set_header X-Real-IP $remote_addr;",
+            "proxy_set_header X-Forwarded-For $remote_addr;",
+            "proxy_set_header X-Forwarded-Proto https;",
+            "proxy_set_header X-Forwarded-Host $host;",
+            "proxy_set_header X-Forwarded-Port 443;",
+            'proxy_set_header Forwarded "";',
+            'proxy_set_header Authorization "";',
+            'proxy_set_header Cookie "";',
+        ):
+            self.assertIn(directive, blog)
+
+        self.assertIn("Blog app · now open", landing)
+        self.assertNotIn("opening soon", landing)
+
     def test_admin_acl_precedes_general_access_and_password_change_is_local(self) -> None:
         configuration = (ROOT / "ops/sso/configuration.yml").read_text(encoding="utf-8")
         server = (ROOT / "ops/sso/admin/server.mjs").read_text(encoding="utf-8")

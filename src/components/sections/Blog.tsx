@@ -26,11 +26,11 @@ export const Blog = () => (
       <Reveal className="blog-copy">
         <div className="blog-status">
           <span aria-hidden="true" />
-          Blog app · opening soon
+          Blog app · now open
         </div>
         <p>
-          개발과 AI, 오래 운영되는 시스템 사이에서 건진 생각을 짧게 기록합니다. 블로그가 열리면 가장 최근 글
-          세 편이 이곳에 놓입니다.
+          개발과 AI, 오래 운영되는 시스템 사이에서 건진 생각을 짧게 기록합니다. 공개된 글은 블로그에서 바로
+          확인할 수 있습니다.
         </p>
         <div className="blog-index-mark" aria-hidden="true">
           <span>Read · Think · Build</span>

@@ -12,6 +12,8 @@ The repository contains only the non-secret SSO configuration. Create the real o
 
 The edge protects the landing page plus React, Vue, Dukkeobi, DDIT FinalProject, Monitor, Pilgrimage, Multtara, and FeelMyRythm. Pilgrimage keeps only its documented health, asset, and UUID share routes public. Deployment checks call loopback origins so a login redirect can never be mistaken for application health.
 
+Blog is a separate public read-only application at `/blog/`. Its versioned host route is [`ops/sso/nginx/blog-public.conf`](ops/sso/nginx/blog-public.conf): the edge proxies only to loopback port `5176`, removes identity and credential headers, and rebuilds forwarded headers instead of trusting client input. Blog has no local account or login system.
+
 ## Branch authentication contract
 
 Every process, build, and repository Compose invocation resolves authentication

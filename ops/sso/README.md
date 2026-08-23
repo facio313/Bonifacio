@@ -47,6 +47,22 @@ Do not replace the audited expected SHA with an on-the-fly value: any mismatch m
 
 Install `nginx/authelia-location.conf`, `nginx/authelia-portal.conf`, and `nginx/sso-admin.conf` once in the `bonifacio.work` server block. Generate `bonifacio-sso-admin-edge-secret.conf` from its example with the same random value mounted into the unified SSO container. Include `nginx/authelia-authrequest.conf` in every protected product location. The include overwrites caller-provided `Remote-*` headers with values returned by Authelia. The ordered Authelia ACL requires `admin` for `/sso/admin/`, `developer` for `/monitor/`, and `user` for every other protected product plus the landing page's `/index.html` and `/assets/` requests, with a deny rule immediately after each grant tier. The administrator path additionally requires the private edge secret and exact header-to-database role revalidation.
 
+Blog is the intentional public read-only exception. Install `nginx/blog-public.conf` as `/etc/nginx/snippets/bonifacio-blog-public.conf`, then include that installed snippet once in the TLS `bonifacio.work` server block. It redirects `/blog` to `/blog/` and proxies only to the loopback Blog web origin on port `5176`. It does not run `auth_request`; it removes caller identity, authorization, cookie, and edge-secret headers and reconstructs forwarded headers from trusted Nginx values. The source-controlled installation sequence is:
+
+```sh
+install -o root -g root -m 0644 \
+  ops/sso/nginx/blog-public.conf \
+  /etc/nginx/snippets/bonifacio-blog-public.conf
+```
+
+Add this line beside the other `bonifacio-*.conf` includes without copying the snippet body into the site file:
+
+```nginx
+include /etc/nginx/snippets/bonifacio-blog-public.conf;
+```
+
+Before a controlled Nginx reload, require `curl --fail --silent --show-error http://127.0.0.1:5176/healthz` and `nginx -t` to pass. The Blog origin must remain loopback-bound; do not add a public origin port or an application-local account system.
+
 Do not protect the general `/sso/` portal with its own auth request. The more-specific `/sso/admin/` location is protected. Keep `/internal/authelia/authz` internal. Product health checks used by the restricted local deployer should use loopback origins. The explicitly documented Pilgrimage and FeelMyRythm public health routes are narrow exceptions and must strip identity headers.
 
 ## Safe rollout
