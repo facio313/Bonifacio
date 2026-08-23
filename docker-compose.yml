@@ -21,11 +21,15 @@ services:
       start_period: 10s
 
   bonifacioSso:
-    image: authelia/authelia:4.39.20@sha256:68277b28658a69bb3f512c2c23c41c7df7d9311d0e506e64e26c96dcd75d0539
+    image: ${BONIFACIO_IMAGE:-ghcr.io/facio313/bonifacio:latest}
+    build:
+      context: .
+      args:
+        PORTFOLIO_BRANCH: ${PORTFOLIO_BRANCH:?run Compose through npm run compose}
+        PORTFOLIO_AUTH_MODE: ${PORTFOLIO_AUTH_MODE:?run Compose through npm run compose}
     platform: linux/arm64
     container_name: bonifacioSso
-    entrypoint: ["/app/authelia"]
-    command: ["--config", "/config/configuration.yml"]
+    command: ["node", "ops/sso/combined.mjs"]
     user: "0:0"
     init: true
     restart: unless-stopped
@@ -34,10 +38,16 @@ services:
         condition: service_healthy
     ports:
       - "127.0.0.1:${BONIFACIO_SSO_PORT:-9091}:9091"
+      - "127.0.0.1:${BONIFACIO_SSO_ADMIN_PORT:-9092}:9092"
     environment:
       TZ: Asia/Seoul
       AUTHELIA_SESSION_SECRET_FILE: /run/secrets/authelia_session_secret
       AUTHELIA_STORAGE_ENCRYPTION_KEY_FILE: /run/secrets/authelia_storage_encryption_key
+      ADMIN_ORIGIN: https://bonifacio.work
+      ADMIN_PORT: "9092"
+      ADMIN_EDGE_SECRET_FILE: /run/secrets/bonifacio_sso_admin_edge_secret
+      SSO_AUTHELIA_BINARY: /usr/local/bin/authelia
+      USERS_DATABASE_PATH: /data/users/current/users_database.yml
     volumes:
       - type: bind
         source: ${BONIFACIO_SSO_CONFIGURATION_PATH:-./ops/sso/configuration.yml}
@@ -47,88 +57,38 @@ services:
         source: ${BONIFACIO_SSO_USERS_PATH:-./.runtime/sso/userdb/current}
         target: /config/users
         read_only: true
+      - type: bind
+        source: ${BONIFACIO_SSO_USERDB_PATH:-./.runtime/sso/userdb}
+        target: /data/users
       - bonifacio_sso_data:/data
     secrets:
       - authelia_session_secret
       - authelia_storage_encryption_key
+      - bonifacio_sso_admin_edge_secret
     networks:
       - bonifacio-sso
     security_opt:
       - no-new-privileges:true
     read_only: true
     tmpfs:
-      - /tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777
+      - /tmp:rw,noexec,nosuid,nodev,size=32m,mode=1777
     cap_drop:
       - ALL
-    pids_limit: 128
-    mem_limit: 256m
-    cpus: 0.75
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "wget",
-          "--quiet",
-          "--tries=1",
-          "--spider",
-          "http://127.0.0.1:9091/sso/api/health",
-        ]
-      interval: 15s
-      timeout: 5s
-      retries: 6
-      start_period: 20s
-
-  bonifacioSsoAdmin:
-    image: ${BONIFACIO_IMAGE:-ghcr.io/facio313/bonifacio:latest}
-    build:
-      context: .
-      args:
-        PORTFOLIO_BRANCH: ${PORTFOLIO_BRANCH:?run Compose through npm run compose}
-        PORTFOLIO_AUTH_MODE: ${PORTFOLIO_AUTH_MODE:?run Compose through npm run compose}
-    container_name: bonifacioSsoAdmin
-    command: ["node", "ops/sso/admin/server.mjs"]
-    user: "0:0"
-    init: true
-    restart: unless-stopped
-    read_only: true
-    depends_on:
-      bonifacioSso:
-        condition: service_healthy
-    ports:
-      - "127.0.0.1:${BONIFACIO_SSO_ADMIN_PORT:-9092}:9092"
-    environment:
-      ADMIN_ORIGIN: https://bonifacio.work
-      ADMIN_PORT: "9092"
-      ADMIN_EDGE_SECRET_FILE: /run/secrets/bonifacio_sso_admin_edge_secret
-      AUTHELIA_BINARY: /usr/local/bin/authelia
-      USERS_DATABASE_PATH: /data/users/current/users_database.yml
-    volumes:
-      - type: bind
-        source: ${BONIFACIO_SSO_USERDB_PATH:-./.runtime/sso/userdb}
-        target: /data/users
-    secrets:
-      - bonifacio_sso_admin_edge_secret
-    tmpfs:
-      - /tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    pids_limit: 128
-    mem_limit: 192m
-    cpus: 0.75
+    pids_limit: 256
+    mem_limit: 448m
+    cpus: 1.5
     healthcheck:
       test:
         [
           "CMD",
           "node",
           "-e",
-          "fetch('http://127.0.0.1:9092/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+          "Promise.all(['http://127.0.0.1:9091/sso/api/health','http://127.0.0.1:9092/healthz'].map(url=>fetch(url))).then(rs=>{if(rs.some(r=>!r.ok))process.exit(1)}).catch(()=>process.exit(1))",
         ]
       interval: 15s
       timeout: 5s
-      retries: 4
-      start_period: 10s
+      retries: 6
+      start_period: 20s
 
   bonifacio:
     image: ${BONIFACIO_IMAGE:-ghcr.io/facio313/bonifacio:latest}

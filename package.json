@@ -10,7 +10,7 @@
     "preview": "PORTFOLIO_AUTH_MODE=local ./scripts/portfolio-auth-mode.sh exec -- npm run preview:raw",
     "preview:raw": "vite preview",
     "test:sso-admin": "./scripts/portfolio-auth-mode.sh exec -- npm run test:sso-admin:raw",
-    "test:sso-admin:raw": "node --test ops/sso/admin/*.test.mjs",
+    "test:sso-admin:raw": "node --test ops/sso/*.test.mjs ops/sso/admin/*.test.mjs",
     "test:portfolio-auth": "./scripts/test-portfolio-auth-mode.sh",
     "compose": "./scripts/portfolio-auth-mode.sh exec -- docker compose"
   },

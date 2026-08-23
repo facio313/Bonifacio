@@ -1,13 +1,13 @@
 # Bonifacio SSO operations
 
-Authelia 4.39.20 provides one shared login at `https://bonifacio.work/sso/`. The production image is pinned to the Linux ARM64 manifest digest. A dedicated Redis keeps sessions across portal restarts and SQLite retains Authelia state.
+Authelia 4.39.20 provides one shared login at `https://bonifacio.work/sso/`. Authentication and the Node account-administration API run as two supervised processes in one SSO container and one deployment unit. The production image copies Authelia from a pinned Linux ARM64 manifest digest. A dedicated Redis remains separate so sessions survive SSO container replacements, and the persistent SQLite volume retains Authelia state.
 
 ## Operator-only files
 
 Keep these paths outside Git with directory mode `0700` and file mode `0600`:
 
 - `userdb/current/users_database.yml`: the complete user directory and Argon2id password digests
-- `userdb/backups/`: automatic pre-change copies retained by the administrator service
+- `userdb/backups/`: automatic pre-change copies retained by the administrator process
 - `userdb/audit.jsonl`: password-free account management events
 - `bootstrap-credentials.txt`: the initial administrator credential handoff; delete it after choosing a private password
 - `session-secret`: session encryption material
@@ -15,7 +15,7 @@ Keep these paths outside Git with directory mode `0700` and file mode `0600`:
 
 The production host keeps the rootless Docker-readable configuration, user database, and secrets under `/home/cks/.config/portfolio-sso/`. Generate independent random secret files with `authelia crypto rand --length 64 --file ...`; never print them. Generate the first administrator password digest with `authelia crypto hash generate argon2`, then pipe only that digest to `write_user_database.py` and place the resulting file in `userdb/current/`. The bootstrap writer refuses replacement, validates the digest shape, loads `role-contract.json`, and creates a mode-`0600` database without printing it.
 
-Run `sudo python3 ops/sso/sync_edge_secrets.py admin monitor pilgrimage feelmyrythm multtara` once before enabling the dynamic routes. It creates or reuses separate application secrets and atomically writes matching root-only Nginx header snippets without printing their values. Admin and Monitor use mode `0600`; the three non-root application containers use host-owner/private-group mode `0640`, which rootless Docker presents as `root:root 0640` while the application keeps its non-root UID and effective GID 0. It intentionally has no implicit rotation mode: rotating only one side would lock out a live application, so future rotation must be an explicit two-sided rollout.
+Run `sudo python3 ops/sso/sync_edge_secrets.py admin monitor pilgrimage feelmyrythm multtara` once before enabling the dynamic routes. It creates or reuses separate application secrets and atomically writes matching root-only Nginx header snippets without printing their values. The unified SSO container's admin boundary and Monitor use mode `0600`; the three non-root application containers use host-owner/private-group mode `0640`, which rootless Docker presents as `root:root 0640` while the application keeps its non-root UID and effective GID 0. It intentionally has no implicit rotation mode: rotating only one side would lock out a live application, so future rotation must be an explicit two-sided rollout.
 
 ## Account administration
 
@@ -27,7 +27,7 @@ The private administrator password form accepts 4–128 characters and rejects t
 
 Central usernames and email addresses are immutable through the administrator UI. Downstream applications establish a one-time link to the immutable username (`Remote-User`) and controlled first-link email, so prefer disabling a mistaken account and issuing a corrected one. If an established identity must be corrected by explicit operator request, treat it as a coordinated migration: back up every affected store, stop linked writers, update only exact stable user IDs after collision checks, commit the central record through `UserStore`, invalidate cached SSO sessions, and prove that every linked application reused its existing account. The UI prevents the active administrator from removing their own rights and prevents disabling the last enabled admin.
 
-The administrator service holds write access only to `userdb/`. Authelia mounts `userdb/current/` read-only and watches it, leaving exactly one writer. The Authelia service bypasses the image's recursive-chown entrypoint, runs as root only inside the rootless user namespace with every capability dropped, disables the image's writable healthcheck state, and uses an explicit HTTP health probe; this preserves a read-only root filesystem and read-only directory bind. File watching applies changes without a restart. Every administrator mutation requires the latest list revision, rechecks the acting administrator inside the write lock, serializes expensive password hashing, is spaced beyond Authelia's watcher cooldown, backed up, fsynced, atomically renamed, and recorded as password-free prepared/committed audit events. A post-rename housekeeping failure is logged but never turns an already-applied one-time password change into a misleading failed response.
+The unified container mounts `userdb/current/` read-only at Authelia's configured path and the parent `userdb/` read-write at the administrator's path. Only the administrator code writes; Authelia watches the read-only alias and applies atomic replacements without a restart. Because both paths exist in one mount namespace, this is no longer a security boundary between containers: it is an explicit code and path discipline accepted by the unified design. The container runs as root only inside the rootless user namespace with every capability dropped, uses a read-only root filesystem, and has a health probe that requires both Authelia and the administrator endpoint. Every administrator mutation requires the latest list revision, rechecks the acting administrator inside the write lock, serializes expensive password hashing, is spaced beyond Authelia's watcher cooldown, backed up, fsynced, atomically renamed, and recorded as password-free prepared/committed audit events. A post-rename housekeeping failure is logged but never turns an already-applied one-time password change into a misleading failed response.
 
 ### One-shot legacy role migration
 
@@ -45,20 +45,20 @@ Do not replace the audited expected SHA with an on-the-fly value: any mismatch m
 
 ## Nginx boundary
 
-Install `nginx/authelia-location.conf`, `nginx/authelia-portal.conf`, and `nginx/sso-admin.conf` once in the `bonifacio.work` server block. Generate `bonifacio-sso-admin-edge-secret.conf` from its example with the same random value mounted into the admin container. Include `nginx/authelia-authrequest.conf` in every protected product location. The include overwrites caller-provided `Remote-*` headers with values returned by Authelia. The ordered Authelia ACL requires `admin` for `/sso/admin/`, `developer` for `/monitor/`, and `user` for every other protected product plus the landing page's `/index.html` and `/assets/` requests, with a deny rule immediately after each grant tier. The administrator path additionally requires the private edge secret and exact header-to-database role revalidation.
+Install `nginx/authelia-location.conf`, `nginx/authelia-portal.conf`, and `nginx/sso-admin.conf` once in the `bonifacio.work` server block. Generate `bonifacio-sso-admin-edge-secret.conf` from its example with the same random value mounted into the unified SSO container. Include `nginx/authelia-authrequest.conf` in every protected product location. The include overwrites caller-provided `Remote-*` headers with values returned by Authelia. The ordered Authelia ACL requires `admin` for `/sso/admin/`, `developer` for `/monitor/`, and `user` for every other protected product plus the landing page's `/index.html` and `/assets/` requests, with a deny rule immediately after each grant tier. The administrator path additionally requires the private edge secret and exact header-to-database role revalidation.
 
 Do not protect the general `/sso/` portal with its own auth request. The more-specific `/sso/admin/` location is protected. Keep `/internal/authelia/authz` internal. Product health checks used by the restricted local deployer should use loopback origins. The explicitly documented Pilgrimage and FeelMyRythm public health routes are narrow exceptions and must strip identity headers.
 
 ## Safe rollout
 
-1. Validate the configuration with the exact pinned image.
-2. Start `bonifacioSsoRedis` and `bonifacioSso` without changing product routes.
-3. Verify the portal and auth endpoint through loopback.
+1. Validate the configuration and supervisor tests against the exact pinned build inputs.
+2. Start `bonifacioSsoRedis`, then start the unified `bonifacioSso` container with both loopback ports.
+3. Verify the portal/auth endpoint on port 9091 and administrator health on port 9092.
 4. Add the auth include to one product at a time and verify redirect, login, trusted headers, and logout.
 5. Enable the corresponding app-native SSO exchange before removing its old login UI.
-6. Verify `/sso/admin/` and a one-time test account create/login/reset/disable cycle.
-7. Preserve the SSO containers, volumes, and every unrelated container ID during each rollout.
+6. Verify `/sso/admin/` and a one-time test account create/login/reset/disable cycle, including Authelia's live file watcher.
+7. Preserve Redis, both named volumes, and every unrelated container ID during each rollout.
 
-The restricted Bonifacio deployer records the SSO and Redis container IDs before replacing the landing page and administrator service and requires the same healthy IDs afterward. Application deploys must not recreate either authentication service.
+The first split-to-unified conversion is a structural migration: preserve the former Compose layout and both prior images for rollback, remove the old administrator container that owns port 9092, and then replace the former Authelia-only container with the unified image under the fleet deployment lock. After that migration, the restricted deployer replaces the unified SSO and landing containers together, verifies both SSO endpoints, and requires the Redis container ID to remain unchanged.
 
 Never run stack-wide `down -v` or remove either `bonifacio-sso-*` volume.

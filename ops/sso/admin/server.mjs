@@ -433,7 +433,7 @@ export function createHandler({
       const trustedEdgeSecret = edgeSecret ?? loadEdgeSecret();
       if (request.method === 'GET' && url.pathname === '/healthz') {
         await store.read();
-        await access(process.env.AUTHELIA_BINARY ?? '/usr/local/bin/authelia', fileConstants.X_OK);
+        await access(process.env.SSO_AUTHELIA_BINARY ?? '/usr/local/bin/authelia', fileConstants.X_OK);
         sendJson(response, 200, { ok: true });
         return;
       }

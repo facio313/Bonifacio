@@ -25,11 +25,11 @@ const PASSWORD_MAX_LENGTH = 128;
 const PASSWORD_PROMPT = 'Enter Password:';
 const HASH_PASSWORD_COMMAND = [
   'stty cols 160 rows 40',
-  'exec "$AUTHELIA_BINARY" crypto hash generate argon2 --no-confirm --variant argon2id --iterations 3 --memory 65536 --parallelism 4 --key-size 32 --salt-size 16',
+  'exec "$SSO_AUTHELIA_BINARY" crypto hash generate argon2 --no-confirm --variant argon2id --iterations 3 --memory 65536 --parallelism 4 --key-size 32 --salt-size 16',
 ].join('; ');
 const VERIFY_PASSWORD_COMMAND = [
   'stty cols 160 rows 40',
-  'exec "$AUTHELIA_BINARY" crypto hash validate -- "$AUTHELIA_PASSWORD_DIGEST"',
+  'exec "$SSO_AUTHELIA_BINARY" crypto hash validate -- "$SSO_PASSWORD_DIGEST"',
 ].join('; ');
 
 function loadRoleContract() {
@@ -510,7 +510,7 @@ export class UserStore {
 }
 
 export function generateTemporaryCredential(
-  binary = process.env.AUTHELIA_BINARY ?? '/usr/local/bin/authelia',
+  binary = process.env.SSO_AUTHELIA_BINARY ?? '/usr/local/bin/authelia',
 ) {
   return new Promise((resolve, reject) => {
     const child = spawn(
@@ -583,7 +583,7 @@ function runPasswordPrompt(
   command,
   password,
   {
-    binary = process.env.AUTHELIA_BINARY ?? '/usr/local/bin/authelia',
+    binary = process.env.SSO_AUTHELIA_BINARY ?? '/usr/local/bin/authelia',
     digest,
     scriptBinary = process.env.SCRIPT_BINARY ?? '/usr/bin/script',
     timeoutMs = 15000,
@@ -622,8 +622,8 @@ function runPasswordPrompt(
         {
           detached: true,
           env: {
-            AUTHELIA_BINARY: binary,
-            AUTHELIA_PASSWORD_DIGEST: digest ?? '',
+            SSO_AUTHELIA_BINARY: binary,
+            SSO_PASSWORD_DIGEST: digest ?? '',
             LC_ALL: 'C',
             PATH: '/usr/bin:/bin',
             SHELL: '/bin/sh',
