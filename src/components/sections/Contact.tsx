@@ -1,4 +1,4 @@
-/* 03 — CONTACT section */
+/* 04 — CONTACT section */
 import { Reveal, Arrow } from '../atoms'
 import { SectionRail } from '../Nav'
 
@@ -11,8 +11,8 @@ export const Contact = () => {
   ]
 
   return (
-    <section id="contact" className="section" data-screen-label="03 Contact" style={{ background: 'var(--ink)' }}>
-      <SectionRail num="03" label="Contact" />
+    <section id="contact" className="section" data-screen-label="04 Contact" style={{ background: 'var(--ink)' }}>
+      <SectionRail num="04" label="Contact" />
       <style>{`
         #contact .section-rail .num { color: var(--bg); }
         #contact .section-rail .vrt { color: rgba(255,255,255,0.5); }
@@ -34,7 +34,7 @@ export const Contact = () => {
           }}
         >
           <span style={{ width: 32, height: 1, background: 'var(--bg)', display: 'inline-block' }} />
-          03 / Contact
+          04 / Contact
         </div>
       </Reveal>
 

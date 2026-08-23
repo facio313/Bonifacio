@@ -3,6 +3,7 @@ import { DotNav } from './components/Nav'
 import { Profile } from './components/sections/Profile'
 import { About } from './components/sections/About'
 import { Works } from './components/sections/Works'
+import { Blog } from './components/sections/Blog'
 import { Contact } from './components/sections/Contact'
 
 export default function App() {
@@ -18,6 +19,7 @@ export default function App() {
       <Profile />
       <About />
       <Works />
+      <Blog />
       <Contact />
     </>
   )

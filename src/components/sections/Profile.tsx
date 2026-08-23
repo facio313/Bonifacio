@@ -5,6 +5,7 @@ import { Reveal, Arrow, LiveDot } from '../atoms'
 import { SectionRail } from '../Nav'
 import { CardVisual } from '../CardVisual'
 import { apps } from '../../apps.config'
+import { BLOG_HREF } from '../../blog.config'
 import { ACCENT, BIO_LINE } from '../../site'
 
 const scrollTo = (id: string) => (e: MouseEvent) => {
@@ -214,6 +215,27 @@ export const Profile = () => {
                 }}
               >
                 소개 읽기
+              </a>
+              <a
+                href={BLOG_HREF}
+                className="intro-blog-cta"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  padding: '13px 22px',
+                  background: 'var(--accent)',
+                  border: '1px solid var(--accent)',
+                  borderRadius: 999,
+                  textDecoration: 'none',
+                  color: 'var(--accent-ink)',
+                  fontSize: 15,
+                  letterSpacing: '-0.01em',
+                  fontWeight: 500,
+                  transition: 'transform 0.3s, box-shadow 0.3s, background 0.3s',
+                }}
+              >
+                블로그 <Arrow rotate={-45} />
               </a>
             </div>
           </Reveal>

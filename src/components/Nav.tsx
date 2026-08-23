@@ -17,6 +17,7 @@ const SECTIONS = [
   { id: 'intro', label: 'Intro' },
   { id: 'about', label: 'About' },
   { id: 'works', label: 'Works' },
+  { id: 'blog', label: 'Blog' },
   { id: 'contact', label: 'Contact' },
 ]
 
@@ -48,13 +49,14 @@ export const DotNav = () => {
   }, [])
 
   return (
-    <nav className="dot-nav" aria-label="Section navigation">
+    <nav className={`dot-nav ${active === 'contact' ? 'on-dark' : ''}`} aria-label="Section navigation">
       {SECTIONS.map((s) => (
         <a
           key={s.id}
           href={`#${s.id}`}
           data-label={s.label}
           className={active === s.id ? 'active' : ''}
+          aria-current={active === s.id ? 'true' : undefined}
           onClick={(e) => {
             e.preventDefault()
             document.getElementById(s.id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
