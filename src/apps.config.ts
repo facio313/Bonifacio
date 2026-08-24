@@ -22,6 +22,16 @@ export const apps: App[] = [
     icon: '🎵',
   },
   {
+    id: 'garak',
+    title: 'Garak',
+    description: '솔로부터 오케스트라까지 브라우저에서 작성·재생·내보내는 웹 악보 편집기.',
+    href: '/garak/',
+    status: 'beta',
+    tags: ['React', 'VexFlow', 'MusicXML'],
+    color: '#b76f46',
+    icon: '🎼',
+  },
+  {
     id: 'multtara',
     title: 'Multtara',
     description: '새로운 구현을 준비하고 있는 포트폴리오 프로젝트.',
