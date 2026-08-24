@@ -32,6 +32,17 @@ export const apps: App[] = [
     icon: '✨',
   },
   {
+    id: 'garak',
+    title: 'Garak',
+    description: '솔로부터 오케스트라까지 브라우저에서 작성·재생·내보내는 웹 악보 편집기.',
+    href: 'https://garak-studio.faccio313.chatgpt.site/',
+    external: true,
+    status: 'beta',
+    tags: ['React', 'VexFlow', 'MusicXML'],
+    color: '#b76f46',
+    icon: '🎼',
+  },
+  {
     id: 'vue',
     title: 'Vue',
     description: 'Vue와 OpenLayers로 지도와 도형 편집을 체험하는 공간정보 데모.',
