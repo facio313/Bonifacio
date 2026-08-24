@@ -131,6 +131,7 @@ class PortfolioSsoContractTests(unittest.TestCase):
             "api",
             "multtara",
             "feelmyrythm",
+            "garak",
         ):
             self.assertIn(f"'^/{route}(?:[/?].*)?$'", configuration)
         self.assertIn("password_change:\n    disable: true", configuration)

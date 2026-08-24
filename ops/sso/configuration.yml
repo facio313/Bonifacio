@@ -80,6 +80,7 @@ access_control:
         - '^/api(?:[/?].*)?$'
         - '^/multtara(?:[/?].*)?$'
         - '^/feelmyrythm(?:[/?].*)?$'
+        - '^/garak(?:[/?].*)?$'
       subject: group:user
       policy: one_factor
     - domain:

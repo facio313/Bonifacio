@@ -10,7 +10,7 @@ Central accounts are managed at `https://bonifacio.work/sso/admin/`. The screen 
 
 The repository contains only the non-secret SSO configuration. Create the real operator files and dedicated user database directory outside Git as described in [`ops/sso/README.md`](ops/sso/README.md). Do not run `docker compose down -v`: the Authelia SQLite and Redis volumes are persistent authentication state.
 
-The edge protects the landing page plus React, Vue, Dukkeobi, DDIT FinalProject, Monitor, Pilgrimage, Multtara, and FeelMyRythm. Pilgrimage keeps only its documented health, asset, and UUID share routes public. Deployment checks call loopback origins so a login redirect can never be mistaken for application health.
+The edge protects the landing page plus React, Vue, Dukkeobi, DDIT FinalProject, Monitor, Pilgrimage, Multtara, FeelMyRythm, and Garak. Pilgrimage keeps only its documented health, asset, and UUID share routes public. Deployment checks call loopback origins so a login redirect can never be mistaken for application health.
 
 Blog is a separate public read-only application at `/blog/`. Its versioned host route is [`ops/sso/nginx/blog-public.conf`](ops/sso/nginx/blog-public.conf): the edge proxies only to loopback port `5176`, removes identity and credential headers, and rebuilds forwarded headers instead of trusting client input. Blog has no local account or login system.
 
