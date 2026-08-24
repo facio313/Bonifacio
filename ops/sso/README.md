@@ -63,6 +63,20 @@ include /etc/nginx/snippets/bonifacio-blog-public.conf;
 
 Before a controlled Nginx reload, require `curl --fail --silent --show-error http://127.0.0.1:5176/healthz` and `nginx -t` to pass. The Blog origin must remain loopback-bound; do not add a public origin port or an application-local account system.
 
+FeelMyRythm has both the central edge session and its own short-lived bearer session. Install `nginx/feelmyrythm-api.conf` as `/etc/nginx/snippets/bonifacio-feelmyrythm-api.conf`, then include it once in the TLS `bonifacio.work` server block alongside the existing FeelMyRythm locations:
+
+```sh
+install -o root -g root -m 0644 \
+  ops/sso/nginx/feelmyrythm-api.conf \
+  /etc/nginx/snippets/bonifacio-feelmyrythm-api.conf
+```
+
+```nginx
+include /etc/nginx/snippets/bonifacio-feelmyrythm-api.conf;
+```
+
+The dedicated prefix is more specific than `/feelmyrythm/`. It retains the central `auth_request`, trusted identity headers, and application edge secret, while `proxy_intercept_errors off` lets application-origin `401` JSON reach the web client. This distinction is required: an edge authorization `401` must still redirect to `/sso/`, but a rejected or expired FeelMyRythm bearer token must reach the client so it can refresh or exchange its application session. Keep the exact public `/feelmyrythm/api/health` location in the server block; the exact match remains the narrow unauthenticated health exception.
+
 Do not protect the general `/sso/` portal with its own auth request. The more-specific `/sso/admin/` location is protected. Keep `/internal/authelia/authz` internal. Product health checks used by the restricted local deployer should use loopback origins. The explicitly documented Pilgrimage and FeelMyRythm public health routes are narrow exceptions and must strip identity headers.
 
 ## Safe rollout

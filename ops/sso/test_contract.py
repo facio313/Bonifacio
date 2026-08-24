@@ -101,6 +101,33 @@ class PortfolioSsoContractTests(unittest.TestCase):
         self.assertIn("Blog app · now open", landing)
         self.assertNotIn("opening soon", landing)
 
+    def test_feelmyrythm_api_preserves_application_authentication_failures(self) -> None:
+        api = (ROOT / "ops/sso/nginx/feelmyrythm-api.conf").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("location ^~ /feelmyrythm/api/ {", api)
+        self.assertIn(
+            "include /etc/nginx/snippets/bonifacio-sso-authrequest.conf;", api
+        )
+        self.assertIn(
+            "include /etc/nginx/snippets/feelmyrythm-edge-secret.conf;", api
+        )
+        self.assertEqual(api.count("proxy_pass "), 1)
+        self.assertIn("proxy_pass http://127.0.0.1:5175;", api)
+        self.assertIn("proxy_intercept_errors off;", api)
+        self.assertNotIn("error_page 401", api)
+        self.assertNotIn('proxy_set_header Authorization "";', api)
+        for directive in (
+            "proxy_set_header Host $host;",
+            "proxy_set_header X-Real-IP $remote_addr;",
+            "proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+            "proxy_set_header X-Forwarded-Proto https;",
+            "proxy_set_header X-Forwarded-Prefix /feelmyrythm;",
+            "client_max_body_size 50m;",
+        ):
+            self.assertIn(directive, api)
+
     def test_admin_acl_precedes_general_access_and_password_change_is_local(self) -> None:
         configuration = (ROOT / "ops/sso/configuration.yml").read_text(encoding="utf-8")
         server = (ROOT / "ops/sso/admin/server.mjs").read_text(encoding="utf-8")
