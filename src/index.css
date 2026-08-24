@@ -79,6 +79,24 @@ body {
   .section.section-tall { padding-top: 64px; padding-bottom: 80px; }
 }
 
+/* A larger Works preview may exceed a short desktop viewport. Let Intro grow
+   and keep its footer in normal flow instead of clipping or overlapping it. */
+@media (min-width: 721px) and (max-height: 820px) {
+  #intro.section {
+    min-height: 100vh;
+    max-height: none;
+    justify-content: flex-start;
+    overflow: visible;
+  }
+
+  #intro .intro-scroll {
+    position: static !important;
+    left: auto !important;
+    right: auto !important;
+    margin-top: 32px;
+  }
+}
+
 /* Mobile */
 @media (max-width: 720px) {
   .section { padding: 48px 24px 48px 64px; min-height: auto; }

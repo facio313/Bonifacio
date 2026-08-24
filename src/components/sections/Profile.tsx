@@ -19,6 +19,8 @@ const previewList = apps.map((app, index) => ({
   id: app.id,
   num: String(index + 1).padStart(2, '0'),
   name: app.title,
+  icon: app.icon,
+  color: app.color,
 }))
 
 export const Profile = () => {
@@ -322,10 +324,21 @@ const MiniCardStrip = ({ accent }: { accent: string }) => {
 
       <div
         className="mini-strip"
+        role="region"
+        aria-label="작업 미리보기 목록. 좌우로 스크롤하여 전체 작업을 볼 수 있습니다."
+        tabIndex={0}
         style={{
           display: 'grid',
-          gridTemplateColumns: `repeat(${list.length}, minmax(0, 1fr))`,
+          gridAutoFlow: 'column',
+          gridAutoColumns: '192px',
+          gridTemplateRows: '1fr',
           gap: 10,
+          overflowX: 'auto',
+          overflowY: 'hidden',
+          overscrollBehaviorInline: 'contain',
+          scrollSnapType: 'x proximity',
+          scrollbarWidth: 'thin',
+          padding: '8px 2px 14px',
         }}
       >
         {list.map((p, i) => (
@@ -345,6 +358,7 @@ const MiniCardStrip = ({ accent }: { accent: string }) => {
               textDecoration: 'none',
               color: 'inherit',
               aspectRatio: '4 / 5',
+              scrollSnapAlign: 'start',
               boxShadow: 'var(--shadow-1)',
               animationDelay: `${i * 60}ms`,
               transition: 'transform 0.4s cubic-bezier(0.2,0.7,0.2,1), box-shadow 0.4s, border-color 0.3s',
@@ -359,8 +373,12 @@ const MiniCardStrip = ({ accent }: { accent: string }) => {
                 background: '#fff',
               }}
             >
-              <div style={{ position: 'absolute', inset: 0 }}>
-                <CardVisual kind={p.id} accent={accent} />
+              <div aria-hidden="true" style={{ position: 'absolute', inset: 0 }}>
+                <CardVisual
+                  kind={p.id}
+                  accent={p.color || accent}
+                  fallback={{ icon: p.icon, label: p.name, color: p.color }}
+                />
               </div>
             </div>
             <div style={{ padding: '8px 10px 10px', display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -400,13 +418,12 @@ const MiniCardStrip = ({ accent }: { accent: string }) => {
           border-color: var(--accent) !important;
           box-shadow: var(--shadow-2) !important;
         }
-        @media (max-width: 1024px) {
-          .mini-strip { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; }
-          .mini-strip .mini-card:nth-child(n+5) { display: none !important; }
+        .mini-strip:focus-visible {
+          outline: 2px solid var(--accent);
+          outline-offset: 3px;
         }
         @media (max-width: 720px) {
-          .mini-strip { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
-          .mini-strip .mini-card:nth-child(n+4) { display: none !important; }
+          .mini-strip { grid-auto-columns: 160px !important; }
         }
       `}</style>
     </div>

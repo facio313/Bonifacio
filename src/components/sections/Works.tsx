@@ -26,6 +26,7 @@ const fromApp = (app: App, num: string): WorkCard => ({
   id: app.id,
   num,
   name: app.title,
+  kind: app.id,
   tag: app.tags[0] ?? 'App',
   desc: app.description,
   stack: app.tags,
@@ -107,6 +108,7 @@ const ProjectCard = ({ card, accent }: { card: WorkCard; accent: string }) => {
         }}
       >
         <div
+          aria-hidden="true"
           style={{
             position: 'absolute',
             inset: 0,
@@ -114,7 +116,11 @@ const ProjectCard = ({ card, accent }: { card: WorkCard; accent: string }) => {
             transition: 'transform 1.2s cubic-bezier(0.2,0.7,0.2,1)',
           }}
         >
-          <CardVisual kind={card.kind} accent={accent} fallback={card.fallback} />
+          <CardVisual
+            kind={card.kind}
+            accent={card.fallback?.color || accent}
+            fallback={card.fallback}
+          />
         </div>
         {/* accent sweep on hover */}
         <div
