@@ -281,16 +281,32 @@ class PortfolioSsoContractTests(unittest.TestCase):
         self.assertIn("state.revision = payload.revision;", user_script)
         self.assertNotIn('id="password-form"', admin_page)
         self.assertIn('href="/sso/user/"', admin_page)
+        self.assertIn('href="/sso/"', admin_page)
+        self.assertIn("SSO 포털로 돌아가기", admin_page)
+        self.assertIn("내 정보로 돌아가기", admin_page)
 
     def test_landing_links_to_role_appropriate_self_service(self) -> None:
         profile = (ROOT / "src/components/sections/Profile.tsx").read_text(
             encoding="utf-8"
         )
+        navigation = (ROOT / "src/accountNavigation.mjs").read_text(
+            encoding="utf-8"
+        )
 
-        self.assertIn('href="/sso/user/"', profile)
-        self.assertIn('aria-label="내 정보 열기"', profile)
-        self.assertIn('defaultValue="내 정보"', profile)
-        self.assertNotIn('href="/sso/admin/"', profile)
+        self.assertIn("window.fetch('/sso/user/api/session'", profile)
+        self.assertIn("accountNavigationFromSession(payload)", profile)
+        self.assertIn("href={accountNavigation.href}", profile)
+        self.assertIn("aria-label={accountNavigation.ariaLabel}", profile)
+        self.assertIn("{accountNavigation.label}", profile)
+        self.assertIn("data-central-account-link", profile)
+        self.assertNotIn("canManageUsers", profile)
+        self.assertIn("role === 'chief-admin'", navigation)
+        self.assertIn("role === 'user' || role === 'admin'", navigation)
+        self.assertIn("href: '/sso/admin/'", navigation)
+        self.assertIn("label: 'SSO ADMIN'", navigation)
+        self.assertIn("href: '/sso/user/'", navigation)
+        self.assertIn("label: '내 정보'", navigation)
+        self.assertIn("return null", navigation)
 
     def test_canonical_role_contract_is_shared_by_bootstrap_and_admin(self) -> None:
         contract = json.loads(

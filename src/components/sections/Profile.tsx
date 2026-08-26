@@ -1,5 +1,5 @@
 /* 00 — INTRO / HERO section. Full viewport. */
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { MouseEvent } from 'react'
 import { Reveal, Arrow, LiveDot } from '../atoms'
 import { SectionRail } from '../Nav'
@@ -8,6 +8,10 @@ import { EditableLink, EditableText } from '../ContentEditor'
 import { apps } from '../../apps.config'
 import { BLOG_HREF } from '../../blog.config'
 import { ACCENT, BIO_LINE } from '../../site'
+import {
+  SELF_SERVICE_ACCOUNT_NAVIGATION,
+  accountNavigationFromSession,
+} from '../../accountNavigation.mjs'
 
 const scrollTo = (id: string) => (e: MouseEvent) => {
   e.preventDefault()
@@ -28,6 +32,34 @@ export const Profile = () => {
   // mouse-tracked subtle parallax
   const wrapRef = useRef<HTMLElement | null>(null)
   const [tilt, setTilt] = useState({ x: 0, y: 0 })
+  const [accountNavigation, setAccountNavigation] = useState(SELF_SERVICE_ACCOUNT_NAVIGATION)
+
+  useEffect(() => {
+    const controller = new AbortController()
+
+    const loadAccountNavigation = async () => {
+      try {
+        const response = await window.fetch('/sso/user/api/session', {
+          cache: 'no-store',
+          credentials: 'same-origin',
+          headers: { Accept: 'application/json' },
+          signal: controller.signal,
+        })
+        if (!response.ok) throw new Error('central account session unavailable')
+        const payload: unknown = await response.json()
+        const navigation = accountNavigationFromSession(payload)
+        if (!navigation) throw new Error('central account role invalid')
+        setAccountNavigation(navigation)
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') return
+        setAccountNavigation(SELF_SERVICE_ACCOUNT_NAVIGATION)
+      }
+    }
+
+    void loadAccountNavigation()
+    return () => controller.abort()
+  }, [])
+
   const onMove = (e: MouseEvent) => {
     const r = wrapRef.current?.getBoundingClientRect()
     if (!r) return
@@ -97,12 +129,13 @@ export const Profile = () => {
             />{' '}
             <Arrow size={10} rotate={-45} />
           </EditableLink>
-          <EditableLink className="monitor-link" href="/sso/user/" aria-label="내 정보 열기">
-            <EditableText
-              contentKey="profile.utility.account"
-              label="내 정보 버튼"
-              defaultValue="내 정보"
-            />{' '}
+          <EditableLink
+            className="monitor-link"
+            href={accountNavigation.href}
+            aria-label={accountNavigation.ariaLabel}
+            data-central-account-link
+          >
+            {accountNavigation.label}{' '}
             <Arrow size={10} rotate={-45} />
           </EditableLink>
         </div>
