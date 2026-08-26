@@ -58,15 +58,52 @@ class PortfolioSsoContractTests(unittest.TestCase):
         location = (ROOT / "ops/sso/nginx/authelia-location.conf").read_text(encoding="utf-8")
         auth = (ROOT / "ops/sso/nginx/authelia-authrequest.conf").read_text(encoding="utf-8")
         portal = (ROOT / "ops/sso/nginx/authelia-portal.conf").read_text(encoding="utf-8")
-        admin = (ROOT / "ops/sso/nginx/sso-admin.conf").read_text(encoding="utf-8")
+        account_proxy = (ROOT / "ops/sso/nginx/sso-admin.conf").read_text(
+            encoding="utf-8"
+        )
 
         self.assertIn("location = /internal/authelia/authz", location)
         self.assertIn("internal;", location)
         self.assertIn("location ^~ /sso/", portal)
-        self.assertIn("location ^~ /sso/admin/", admin)
-        self.assertIn("include /etc/nginx/snippets/bonifacio-sso-authrequest.conf;", admin)
-        self.assertIn("include /etc/nginx/snippets/bonifacio-sso-admin-edge-secret.conf;", admin)
-        self.assertIn("proxy_pass http://127.0.0.1:9092;", admin)
+        self.assertIn("location = /sso/user {", account_proxy)
+        self.assertIn("return 308 /sso/user/;", account_proxy)
+        self.assertIn("location ^~ /sso/user/ {", account_proxy)
+        self.assertIn("location = /sso/admin {", account_proxy)
+        self.assertIn("return 308 /sso/admin/;", account_proxy)
+        self.assertIn("location ^~ /sso/admin/ {", account_proxy)
+        user_location = account_proxy.split("location ^~ /sso/user/ {", 1)[1].split(
+            "\n}", 1
+        )[0]
+        admin_location = account_proxy.split("location ^~ /sso/admin/ {", 1)[1].split(
+            "\n}", 1
+        )[0]
+        for protected_location in (user_location, admin_location):
+            self.assertIn(
+                "include /etc/nginx/snippets/bonifacio-sso-authrequest.conf;",
+                protected_location,
+            )
+            self.assertIn(
+                "include /etc/nginx/snippets/bonifacio-sso-admin-edge-secret.conf;",
+                protected_location,
+            )
+            self.assertIn(
+                "proxy_pass http://127.0.0.1:9092;", protected_location
+            )
+        self.assertEqual(
+            account_proxy.count(
+                "include /etc/nginx/snippets/bonifacio-sso-authrequest.conf;"
+            ),
+            2,
+        )
+        self.assertEqual(
+            account_proxy.count(
+                "include /etc/nginx/snippets/bonifacio-sso-admin-edge-secret.conf;"
+            ),
+            2,
+        )
+        self.assertEqual(
+            account_proxy.count("proxy_pass http://127.0.0.1:9092;"), 2
+        )
         self.assertIn("auth_request /internal/authelia/authz;", auth)
         for header in ("Remote-User", "Remote-Email", "Remote-Name", "Remote-Groups"):
             self.assertIn(f"proxy_set_header {header} $bonifacio_sso_", auth)
@@ -128,11 +165,42 @@ class PortfolioSsoContractTests(unittest.TestCase):
         ):
             self.assertIn(directive, api)
 
-    def test_admin_acl_precedes_general_access_and_password_change_is_local(self) -> None:
+    def test_account_surfaces_acl_and_password_change_are_separated(self) -> None:
         configuration = (ROOT / "ops/sso/configuration.yml").read_text(encoding="utf-8")
         server = (ROOT / "ops/sso/admin/server.mjs").read_text(encoding="utf-8")
         library = (ROOT / "ops/sso/admin/lib.mjs").read_text(encoding="utf-8")
-        page = (ROOT / "ops/sso/admin/public/index.html").read_text(encoding="utf-8")
+        admin_page = (ROOT / "ops/sso/admin/public/index.html").read_text(
+            encoding="utf-8"
+        )
+        user_page = (ROOT / "ops/sso/admin/public/user.html").read_text(
+            encoding="utf-8"
+        )
+        user_script = (ROOT / "ops/sso/admin/public/user.js").read_text(
+            encoding="utf-8"
+        )
+        rule_blocks = [
+            "    - " + block
+            for block in configuration.split("  rules:\n", 1)[1].split("\n    - ")
+        ]
+        self_service_block, editor_block, admin_allow_block, admin_deny_block = (
+            rule_blocks[:4]
+        )
+        self.assertIn("'^/sso/user(?:[/?].*)?$'", self_service_block)
+        self.assertIn("subject: group:user", self_service_block)
+        self.assertIn("policy: one_factor", self_service_block)
+        self.assertIn("'^/sso/admin/api/editor-access", editor_block)
+        self.assertIn("subject: group:user", editor_block)
+        self.assertIn("policy: one_factor", editor_block)
+        self.assertIn("'^/sso/admin(?:[/?].*)?$'", admin_allow_block)
+        self.assertIn("subject: group:admin", admin_allow_block)
+        self.assertIn("policy: one_factor", admin_allow_block)
+        self.assertIn("'^/sso/admin(?:[/?].*)?$'", admin_deny_block)
+        self.assertNotIn("subject:", admin_deny_block)
+        self.assertIn("policy: deny", admin_deny_block)
+        self_service_rule = configuration.index("'^/sso/user(?:[/?].*)?$'")
+        self_service_user_rule = configuration.index(
+            "subject: group:user", self_service_rule
+        )
         editor_rule = configuration.index("'^/sso/admin/api/editor-access")
         editor_user_rule = configuration.index("subject: group:user", editor_rule)
         admin_rule = configuration.index("subject: group:admin", editor_user_rule)
@@ -141,6 +209,8 @@ class PortfolioSsoContractTests(unittest.TestCase):
         user_rule = configuration.index("subject: group:user", chief_rule)
         product_deny = configuration.index("resources: *protected-app-resources")
 
+        self.assertLess(self_service_rule, self_service_user_rule)
+        self.assertLess(self_service_user_rule, editor_rule)
         self.assertLess(editor_rule, admin_rule)
         self.assertLess(editor_user_rule, admin_rule)
         self.assertLess(admin_rule, admin_deny)
@@ -193,7 +263,34 @@ class PortfolioSsoContractTests(unittest.TestCase):
         self.assertIn("['-q', '-e', '-E', 'never', '-c', command, '/dev/null']", library)
         self.assertIn("child.stdin.end(`${password}\\n`)", library)
         self.assertNotIn("'--password'", library)
-        self.assertIn('id="password-form"', page)
+        self.assertIn('id="user-profile"', user_page)
+        self.assertIn('id="password-form"', user_page)
+        self.assertEqual(user_page.count('minlength="14"'), 2)
+        for administrator_control in (
+            'id="open-create"',
+            'id="users"',
+            'id="user-form"',
+            'id="reset-password"',
+        ):
+            self.assertNotIn(administrator_control, user_page)
+        self.assertNotIn("/sso/admin/api", user_script)
+        self.assertIn(
+            "adminLink.hidden = payload.canManageUsers !== true;", user_script
+        )
+        self.assertIn("error.code === 'stale_revision'", user_script)
+        self.assertIn("state.revision = payload.revision;", user_script)
+        self.assertNotIn('id="password-form"', admin_page)
+        self.assertIn('href="/sso/user/"', admin_page)
+
+    def test_landing_links_to_role_appropriate_self_service(self) -> None:
+        profile = (ROOT / "src/components/sections/Profile.tsx").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('href="/sso/user/"', profile)
+        self.assertIn('aria-label="내 정보 열기"', profile)
+        self.assertIn('defaultValue="내 정보"', profile)
+        self.assertNotIn('href="/sso/admin/"', profile)
 
     def test_canonical_role_contract_is_shared_by_bootstrap_and_admin(self) -> None:
         contract = json.loads(

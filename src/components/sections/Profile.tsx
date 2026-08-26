@@ -97,11 +97,11 @@ export const Profile = () => {
             />{' '}
             <Arrow size={10} rotate={-45} />
           </EditableLink>
-          <EditableLink className="monitor-link" href="/sso/admin/" aria-label="SSO 사용자 관리 열기">
+          <EditableLink className="monitor-link" href="/sso/user/" aria-label="내 정보 열기">
             <EditableText
-              contentKey="profile.utility.ssoAdmin"
-              label="SSO Admin 버튼"
-              defaultValue="SSO Admin"
+              contentKey="profile.utility.account"
+              label="내 정보 버튼"
+              defaultValue="내 정보"
             />{' '}
             <Arrow size={10} rotate={-45} />
           </EditableLink>

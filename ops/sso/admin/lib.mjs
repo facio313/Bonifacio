@@ -21,6 +21,7 @@ const USERNAME = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const GROUP = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const ARGON2ID = /^\$argon2id\$v=19\$m=\d+,t=\d+,p=\d+\$[A-Za-z0-9+/]+\$[A-Za-z0-9+/]+$/;
 const PASSWORD_MIN_LENGTH = 4;
+const CHOSEN_PASSWORD_MIN_LENGTH = 14;
 const PASSWORD_MAX_LENGTH = 128;
 const PASSWORD_PROMPT = 'Enter Password:';
 const HASH_PASSWORD_COMMAND = [
@@ -176,6 +177,23 @@ export function normalizePassword(value, field = '새 비밀번호', minimumLeng
     );
   }
   return value;
+}
+
+export function normalizeChosenPassword(value, field = '새 비밀번호') {
+  const password = normalizePassword(value, field, CHOSEN_PASSWORD_MIN_LENGTH);
+  if (
+    !/[A-Z]/.test(password)
+    || !/[a-z]/.test(password)
+    || !/[0-9]/.test(password)
+    || !/[\p{P}\p{S}]/u.test(password)
+  ) {
+    throw new AdminError(
+      400,
+      'invalid_password',
+      `${field}는 ${CHOSEN_PASSWORD_MIN_LENGTH}자 이상 ${PASSWORD_MAX_LENGTH}자 이하이며 영문 대문자, 소문자, 숫자, 특수문자를 각각 하나 이상 포함해야 합니다.`,
+    );
+  }
+  return password;
 }
 
 export function normalizeRole(
@@ -416,22 +434,26 @@ export function serializeUserDatabase(database) {
   return source;
 }
 
+export function publicUser(database, username) {
+  const record = database.users[username];
+  if (!record) return undefined;
+  const assignment = assignmentFromGroups(record.groups);
+  return {
+    username,
+    displayName: record.displayname,
+    email: record.email,
+    role: assignment.role,
+    applications: assignment.role === CHIEF_ADMIN_ROLE
+      ? APPLICATIONS.map((application) => application.id)
+      : assignment.applications,
+    disabled: record.disabled,
+  };
+}
+
 export function publicUsers(database) {
-  return Object.entries(database.users)
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([username, record]) => {
-      const assignment = assignmentFromGroups(record.groups);
-      return {
-        username,
-        displayName: record.displayname,
-        email: record.email,
-        role: assignment.role,
-        applications: assignment.role === CHIEF_ADMIN_ROLE
-          ? APPLICATIONS.map((application) => application.id)
-          : assignment.applications,
-        disabled: record.disabled,
-      };
-    });
+  return Object.keys(database.users)
+    .sort((left, right) => left.localeCompare(right))
+    .map((username) => publicUser(database, username));
 }
 
 export function assertAdminMutationAllowed(database, actor, target, nextRecord) {
@@ -500,22 +522,42 @@ export function assertAdminMayResetPassword(database, actor, target) {
   }
 }
 
-export function assertAuthorizedAdmin(database, actor) {
+export function assertAuthorizedUser(
+  database,
+  actor,
+  {
+    status = 403,
+    code = 'user_required',
+    message = '내 정보에 접근할 수 없습니다.',
+  } = {},
+) {
   const record = database.users[actor.username];
   const actorGroups = normalizeGroups(actor.groups, {
-    status: 403,
-    code: 'admin_required',
-    message: '사용자 관리 권한이 없습니다.',
+    status,
+    code,
+    message,
   });
   if (
     !record ||
     record.disabled ||
-    !record.groups.includes(ADMIN_ROLE) ||
     record.email !== actor.email ||
+    record.displayname !== actor.displayName ||
     record.groups.length !== actorGroups.length ||
     record.groups.some((group, index) => group !== actorGroups[index])
   ) {
-    throw new AdminError(403, 'admin_required', '사용자 관리 권한이 없습니다.');
+    throw new AdminError(status, code, message);
+  }
+}
+
+export function assertAuthorizedAdmin(database, actor) {
+  const authorization = {
+    status: 403,
+    code: 'admin_required',
+    message: '사용자 관리 권한이 없습니다.',
+  };
+  assertAuthorizedUser(database, actor, authorization);
+  if (!database.users[actor.username].groups.includes(ADMIN_ROLE)) {
+    throw new AdminError(authorization.status, authorization.code, authorization.message);
   }
 }
 

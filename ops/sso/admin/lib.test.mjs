@@ -14,11 +14,14 @@ import {
   assertAdminMayResetPassword,
   assertAdminMutationAllowed,
   assertAuthorizedAdmin,
+  assertAuthorizedUser,
   assignmentFromWireGroups,
   groupsForAssignment,
+  normalizeChosenPassword,
   normalizeGroups,
   normalizePassword,
   parseUserDatabase,
+  publicUser,
   publicUsers,
   serializeUserDatabase,
 } from './lib.mjs';
@@ -27,6 +30,7 @@ import {
   identity,
   requireMutationProtection,
   requireTrustedEdge,
+  requireUserMutationProtection,
   validateEdgeSecret,
 } from './server.mjs';
 
@@ -57,18 +61,53 @@ function database() {
 test('user database round-trips without exposing password hashes', () => {
   const parsed = parseUserDatabase(serializeUserDatabase(database()));
   assert.deepEqual(Object.keys(parsed.users), ['member', 'owner']);
+  assert.deepEqual(publicUser(parsed, 'member'), {
+    username: 'member',
+    displayName: 'Member',
+    email: 'member@example.com',
+    role: 'user',
+    applications: ['feelmyrythm'],
+    disabled: false,
+  });
+  assert.equal(publicUser(parsed, 'missing'), undefined);
   const publicResult = publicUsers(parsed);
   assert.equal(publicResult.length, 2);
   assert.equal(JSON.stringify(publicResult).includes('argon2'), false);
   assert.equal(JSON.stringify(publicResult).includes('password'), false);
 });
 
-test('chosen passwords allow four-character bootstrap values and reject unsafe input', () => {
+test('stored and current passwords retain compatibility while chosen passwords match policy', () => {
   assert.equal(normalizePassword('1234'), '1234');
+  assert.equal(normalizePassword('x', '현재 비밀번호', 1), 'x');
   assert.equal(normalizePassword('내가 원하는 안전한 비밀번호!'), '내가 원하는 안전한 비밀번호!');
   for (const value of ['123', 'line\nbreak', 'x'.repeat(129), null]) {
     assert.throws(
       () => normalizePassword(value),
+      (error) => error instanceof AdminError && error.code === 'invalid_password',
+    );
+  }
+  const minimum = `Aa1!${'x'.repeat(10)}`;
+  assert.equal(Array.from(minimum).length, 14);
+  assert.equal(normalizeChosenPassword(minimum), minimum);
+  assert.equal(normalizeChosenPassword('StrongPassword1!'), 'StrongPassword1!');
+  assert.equal(normalizeChosenPassword('StrongPassword1★'), 'StrongPassword1★');
+  const maximum = `Aa1!${'x'.repeat(124)}`;
+  assert.equal(Array.from(maximum).length, 128);
+  assert.equal(normalizeChosenPassword(maximum), maximum);
+  for (const value of [
+    'Short1!',
+    `Aa1!${'x'.repeat(9)}`,
+    'lowercaseonly1!',
+    'UPPERCASEONLY1!',
+    'NoNumberPassword!',
+    'NoSpecialPass12',
+    'SpaceIsNotSpec1 ',
+    `Aa1!${'x'.repeat(125)}`,
+    'StrongPass1!\nunsafe',
+    null,
+  ]) {
+    assert.throws(
+      () => normalizeChosenPassword(value),
       (error) => error instanceof AdminError && error.code === 'invalid_password',
     );
   }
@@ -227,11 +266,36 @@ test('delegated admins can manage only non-admin accounts', () => {
   );
 });
 
-test('current administrator is revalidated against the locked database snapshot', () => {
+test('current user and administrator are exactly revalidated against the database snapshot', () => {
   const value = database();
+  const member = {
+    username: 'member',
+    displayName: 'Member',
+    email: 'member@example.com',
+    groups: ['user', 'portfolio-v2', 'access-feelmyrythm'],
+  };
+  assert.doesNotThrow(() => assertAuthorizedUser(value, member));
+  for (const actor of [
+    { ...member, displayName: 'Forged Member' },
+    { ...member, email: 'forged@example.com' },
+    { ...member, groups: ['user', 'portfolio-v2'] },
+    { ...member, username: 'missing' },
+  ]) {
+    assert.throws(
+      () => assertAuthorizedUser(value, actor),
+      (error) => error instanceof AdminError && error.code === 'user_required',
+    );
+  }
+  value.users.member.disabled = true;
+  assert.throws(
+    () => assertAuthorizedUser(value, member),
+    (error) => error instanceof AdminError && error.code === 'user_required',
+  );
+  value.users.member.disabled = false;
   assert.doesNotThrow(() =>
     assertAuthorizedAdmin(value, {
       username: 'owner',
+      displayName: 'Owner',
       email: 'owner@bonifacio.work',
       groups: ['user', 'admin', 'chief-admin', 'portfolio-v2'],
     }),
@@ -240,6 +304,7 @@ test('current administrator is revalidated against the locked database snapshot'
   assert.throws(
     () => assertAuthorizedAdmin(value, {
       username: 'owner',
+      displayName: 'Owner',
       email: 'owner@bonifacio.work',
       groups: ['user', 'admin', 'chief-admin', 'portfolio-v2'],
     }),
@@ -247,7 +312,7 @@ test('current administrator is revalidated against the locked database snapshot'
   );
 });
 
-test('identity requires exact canonical admin roles and mutations require origin plus CSRF', () => {
+test('identity accepts every canonical user and the two portals have isolated CSRF tokens', () => {
   const edgeSecret = 'test-edge-secret-with-at-least-32-bytes';
   assert.throws(
     () => requireTrustedEdge({ headers: {} }, edgeSecret),
@@ -259,14 +324,12 @@ test('identity requires exact canonical admin roles and mutations require origin
       edgeSecret,
     ),
   );
-  assert.throws(
-    () => identity({ headers: {
-      'remote-user': 'owner',
-      'remote-email': 'owner@bonifacio.work',
-      'remote-groups': 'user,portfolio-v2',
-    } }),
-    (error) => error instanceof AdminError && error.status === 403,
-  );
+  assert.equal(identity({ headers: {
+    'remote-user': 'member',
+    'remote-name': 'Member',
+    'remote-email': 'member@example.com',
+    'remote-groups': 'user,portfolio-v2,access-feelmyrythm',
+  } }).role, 'user');
   for (const groups of [
     'user,admin,chief-admin,portfolio-v2,chief-admin',
     'user,admin,portfolio-v2,unknown',
@@ -278,6 +341,7 @@ test('identity requires exact canonical admin roles and mutations require origin
     assert.throws(
       () => identity({ headers: {
         'remote-user': 'owner',
+        'remote-name': 'Owner',
         'remote-email': 'owner@bonifacio.work',
         'remote-groups': groups,
       } }),
@@ -287,6 +351,7 @@ test('identity requires exact canonical admin roles and mutations require origin
   const request = {
     headers: {
       'remote-user': 'owner',
+      'remote-name': 'Owner',
       'remote-email': 'owner@bonifacio.work',
       'remote-groups': 'user,admin,chief-admin,portfolio-v2',
       origin: 'https://bonifacio.work',
@@ -299,10 +364,27 @@ test('identity requires exact canonical admin roles and mutations require origin
   assert.equal(identity(request).role, 'chief-admin');
   assert.equal(identity({ headers: {
     'remote-user': 'owner',
+    'remote-name': 'Owner',
     'remote-email': 'owner@bonifacio.work',
     'remote-groups': 'user,developer,admin',
   } }).role, 'chief-admin');
   assert.doesNotThrow(() => requireMutationProtection(request));
+  assert.throws(
+    () => requireUserMutationProtection(request),
+    (error) => error instanceof AdminError && error.code === 'invalid_csrf',
+  );
+  const userRequest = {
+    ...request,
+    headers: {
+      ...request.headers,
+      cookie: 'bonifacio_user_csrf=known-token',
+    },
+  };
+  assert.doesNotThrow(() => requireUserMutationProtection(userRequest));
+  assert.throws(
+    () => requireMutationProtection(userRequest),
+    (error) => error instanceof AdminError && error.code === 'invalid_csrf',
+  );
   assert.throws(
     () => requireMutationProtection({ ...request, headers: { ...request.headers, origin: 'https://evil.invalid' } }),
     AdminError,
@@ -353,21 +435,20 @@ test('admin API creates and lists a redacted account through all authentication 
   const path = join(current, 'users_database.yml');
   const edgeSecret = 'test-edge-secret-with-at-least-32-bytes';
   const temporaryPassword = 'one-time-password-not-stored';
-  let verifiedPassword;
-  let chosenPassword;
+  let credentialVerificationCalls = 0;
+  let passwordHashCalls = 0;
   await mkdir(current, { mode: 0o700 });
   await writeFile(path, serializeUserDatabase(database()), { mode: 0o600 });
   const server = createServer(createHandler({
     store: new UserStore(path, { minimumWriteIntervalMs: 0 }),
     edgeSecret,
     generateCredential: async () => ({ password: temporaryPassword, digest }),
-    verifyCredential: async (password, currentDigest) => {
-      verifiedPassword = password;
-      assert.equal(currentDigest, digest);
-      return password === 'current-owner-password';
+    verifyCredential: async () => {
+      credentialVerificationCalls += 1;
+      return true;
     },
-    hashCredential: async (password) => {
-      chosenPassword = password;
+    hashCredential: async () => {
+      passwordHashCalls += 1;
       return changedDigest;
     },
   }));
@@ -381,6 +462,7 @@ test('admin API creates and lists a redacted account through all authentication 
     const base = `http://127.0.0.1:${address.port}/sso/admin/api`;
     const identityHeaders = {
       'Remote-User': 'owner',
+      'Remote-Name': 'Owner',
       'Remote-Email': 'owner@bonifacio.work',
       'Remote-Groups': 'user,admin,chief-admin,portfolio-v2',
       'X-Portfolio-Edge-Secret': edgeSecret,
@@ -400,6 +482,7 @@ test('admin API creates and lists a redacted account through all authentication 
       headers: {
         ...identityHeaders,
         'Remote-User': 'member',
+        'Remote-Name': 'Member',
         'Remote-Email': 'member@example.com',
         'Remote-Groups': 'user,portfolio-v2,access-feelmyrythm',
       },
@@ -467,26 +550,7 @@ test('admin API creates and lists a redacted account through all authentication 
     assert.deepEqual(promoted.user.applications, ['monitor']);
     assert.match(promoted.revision, /^[a-f0-9]{64}$/);
 
-    const wrongCurrentResponse = await fetch(`${base}/account/password`, {
-      method: 'POST',
-      headers: {
-        ...identityHeaders,
-        'Content-Type': 'application/json',
-        Cookie: cookie,
-        Origin: 'https://bonifacio.work',
-        'X-CSRF-Token': session.csrfToken,
-        'If-Match': promoted.revision,
-      },
-      body: JSON.stringify({
-        currentPassword: 'wrong-owner-password',
-        newPassword: '1234',
-        confirmPassword: '1234',
-      }),
-    });
-    assert.equal(wrongCurrentResponse.status, 400);
-    assert.equal(chosenPassword, undefined);
-
-    const changePasswordResponse = await fetch(`${base}/account/password`, {
+    const unavailablePasswordResponse = await fetch(`${base}/account/password`, {
       method: 'POST',
       headers: {
         ...identityHeaders,
@@ -502,15 +566,10 @@ test('admin API creates and lists a redacted account through all authentication 
         confirmPassword: 'chosen-owner-password',
       }),
     });
-    assert.equal(changePasswordResponse.status, 200);
-    const changed = await changePasswordResponse.json();
-    assert.equal(changed.changed, true);
-    assert.equal(changed.logoutUrl, '/sso/logout?rd=https%3A%2F%2Fbonifacio.work%2Fsso%2Fadmin%2F');
-    assert.match(changed.revision, /^[a-f0-9]{64}$/);
-    assert.equal(verifiedPassword, 'current-owner-password');
-    assert.equal(chosenPassword, 'chosen-owner-password');
-    assert.equal((await new UserStore(path).read()).users.owner.password, changedDigest);
-    assert.equal(JSON.stringify(changed).includes('chosen-owner-password'), false);
+    assert.equal(unavailablePasswordResponse.status, 404);
+    assert.equal(credentialVerificationCalls, 0);
+    assert.equal(passwordHashCalls, 0);
+    assert.equal((await new UserStore(path).read()).users.owner.password, digest);
 
     const invalidDisabledResponse = await fetch(`${base}/users/member`, {
       method: 'PATCH',
@@ -539,7 +598,7 @@ test('admin API creates and lists a redacted account through all authentication 
         Cookie: cookie,
         Origin: 'https://bonifacio.work',
         'X-CSRF-Token': session.csrfToken,
-        'If-Match': changed.revision,
+        'If-Match': promoted.revision,
       },
       body: JSON.stringify({
         displayName: 'Member',
@@ -579,6 +638,676 @@ test('admin API creates and lists a redacted account through all authentication 
   }
 });
 
+test('self-service API exposes one exact profile and changes only that account password', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'bonifacio-user-api-'));
+  const currentDirectory = join(directory, 'current');
+  const path = join(currentDirectory, 'users_database.yml');
+  const edgeSecret = 'test-edge-secret-with-at-least-32-bytes';
+  const value = database();
+  value.users.delegate = {
+    disabled: false,
+    displayname: 'Delegate',
+    password: digest,
+    email: 'delegate@bonifacio.work',
+    groups: groupsForAssignment('admin', ['monitor']),
+  };
+  value.users.disabled = {
+    disabled: true,
+    displayname: 'Disabled',
+    password: digest,
+    email: 'disabled@example.com',
+    groups: groupsForAssignment('user', []),
+  };
+  const verified = [];
+  const hashed = [];
+  await mkdir(currentDirectory, { mode: 0o700 });
+  await writeFile(path, serializeUserDatabase(value), { mode: 0o600 });
+  const server = createServer(createHandler({
+    store: new UserStore(path, { minimumWriteIntervalMs: 0 }),
+    edgeSecret,
+    verifyCredential: async (password, currentDigest) => {
+      verified.push({ password, currentDigest });
+      return password === 'current-member-password';
+    },
+    hashCredential: async (password) => {
+      hashed.push(password);
+      return changedDigest;
+    },
+  }));
+  try {
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', resolve);
+    });
+    const address = server.address();
+    assert.ok(address && typeof address === 'object');
+    const service = `http://127.0.0.1:${address.port}`;
+    const userApi = `${service}/sso/user/api`;
+    const memberHeaders = {
+      'Remote-User': 'member',
+      'Remote-Name': 'Member',
+      'Remote-Email': 'member@example.com',
+      'Remote-Groups': 'user,portfolio-v2,access-feelmyrythm',
+      'X-Portfolio-Edge-Secret': edgeSecret,
+    };
+
+    const sessionResponse = await fetch(`${userApi}/session`, { headers: memberHeaders });
+    assert.equal(sessionResponse.status, 200);
+    const setCookie = sessionResponse.headers.get('set-cookie');
+    const cookie = setCookie?.split(';', 1)[0];
+    assert.match(setCookie ?? '', /^bonifacio_user_csrf=[A-Za-z0-9_-]+;/);
+    assert.match(setCookie ?? '', /Path=\/sso\/user\//);
+    assert.equal(setCookie?.includes('bonifacio_admin_csrf'), false);
+    assert.ok(cookie);
+    const session = await sessionResponse.json();
+    assert.deepEqual(Object.keys(session).sort(), [
+      'applications',
+      'canManageUsers',
+      'csrfToken',
+      'profile',
+      'revision',
+    ]);
+    assert.deepEqual(session.profile, {
+      username: 'member',
+      displayName: 'Member',
+      email: 'member@example.com',
+      role: 'user',
+      applications: ['feelmyrythm'],
+    });
+    assert.equal(session.canManageUsers, false);
+    assert.match(session.revision, /^[a-f0-9]{64}$/);
+    assert.equal(session.applications.length, APPLICATIONS.length);
+    assert.equal(
+      session.applications.every((application) => (
+        Object.keys(application).sort().join(',') === 'id,label'
+      )),
+      true,
+    );
+    const sessionWire = JSON.stringify(session);
+    for (const secret of ['owner@bonifacio.work', digest, 'password', 'groups', 'disabled']) {
+      assert.equal(sessionWire.includes(secret), false);
+    }
+    for (const [route, contentType] of [
+      ['/sso/user/', 'text/html'],
+      ['/sso/user/user.css', 'text/css'],
+      ['/sso/user/user.js', 'text/javascript'],
+    ]) {
+      const staticResponse = await fetch(`${service}${route}`, { headers: memberHeaders });
+      assert.equal(staticResponse.status, 200);
+      assert.match(staticResponse.headers.get('content-type') ?? '', new RegExp(`^${contentType}`));
+    }
+
+    const ordinaryAdminResponse = await fetch(`${service}/sso/admin/api/session`, {
+      headers: memberHeaders,
+    });
+    assert.equal(ordinaryAdminResponse.status, 403);
+    const userListResponse = await fetch(`${userApi}/users`, { headers: memberHeaders });
+    assert.equal(userListResponse.status, 404);
+    const userResetResponse = await fetch(`${userApi}/users/member/reset-password`, {
+      method: 'POST',
+      headers: memberHeaders,
+    });
+    assert.equal(userResetResponse.status, 404);
+
+    const passwordBody = {
+      currentPassword: 'current-member-password',
+      newPassword: 'ChosenMember12!',
+      confirmPassword: 'ChosenMember12!',
+    };
+    const crossCsrfResponse = await fetch(`${userApi}/account/password`, {
+      method: 'POST',
+      headers: {
+        ...memberHeaders,
+        'Content-Type': 'application/json',
+        Cookie: 'bonifacio_admin_csrf=admin-token',
+        Origin: 'https://bonifacio.work',
+        'X-CSRF-Token': 'admin-token',
+        'If-Match': session.revision,
+      },
+      body: JSON.stringify(passwordBody),
+    });
+    assert.equal(crossCsrfResponse.status, 403);
+    assert.equal(verified.length, 0);
+
+    const missingRevisionResponse = await fetch(`${userApi}/account/password`, {
+      method: 'POST',
+      headers: {
+        ...memberHeaders,
+        'Content-Type': 'application/json',
+        Cookie: cookie,
+        Origin: 'https://bonifacio.work',
+        'X-CSRF-Token': session.csrfToken,
+      },
+      body: JSON.stringify(passwordBody),
+    });
+    assert.equal(missingRevisionResponse.status, 428);
+    assert.equal(verified.length, 0);
+
+    const staleResponse = await fetch(`${userApi}/account/password`, {
+      method: 'POST',
+      headers: {
+        ...memberHeaders,
+        'Content-Type': 'application/json',
+        Cookie: cookie,
+        Origin: 'https://bonifacio.work',
+        'X-CSRF-Token': session.csrfToken,
+        'If-Match': 'a'.repeat(64),
+      },
+      body: JSON.stringify(passwordBody),
+    });
+    assert.equal(staleResponse.status, 409);
+    assert.equal(verified.length, 0);
+
+    const weakPasswordResponse = await fetch(`${userApi}/account/password`, {
+      method: 'POST',
+      headers: {
+        ...memberHeaders,
+        'Content-Type': 'application/json',
+        Cookie: cookie,
+        Origin: 'https://bonifacio.work',
+        'X-CSRF-Token': session.csrfToken,
+        'If-Match': session.revision,
+      },
+      body: JSON.stringify({
+        ...passwordBody,
+        newPassword: 'weak-password',
+        confirmPassword: 'weak-password',
+      }),
+    });
+    assert.equal(weakPasswordResponse.status, 400);
+    assert.equal((await weakPasswordResponse.json()).error, 'invalid_password');
+    assert.equal(verified.length, 0);
+
+    const unchangedPassword = 'SamePassword12!';
+    const unchangedResponse = await fetch(`${userApi}/account/password`, {
+      method: 'POST',
+      headers: {
+        ...memberHeaders,
+        'Content-Type': 'application/json',
+        Cookie: cookie,
+        Origin: 'https://bonifacio.work',
+        'X-CSRF-Token': session.csrfToken,
+        'If-Match': session.revision,
+      },
+      body: JSON.stringify({
+        currentPassword: unchangedPassword,
+        newPassword: unchangedPassword,
+        confirmPassword: unchangedPassword,
+      }),
+    });
+    assert.equal(unchangedResponse.status, 400);
+    assert.equal((await unchangedResponse.json()).error, 'password_unchanged');
+    assert.equal(verified.length, 0);
+    assert.equal(hashed.length, 0);
+
+    const wrongCurrentResponse = await fetch(`${userApi}/account/password`, {
+      method: 'POST',
+      headers: {
+        ...memberHeaders,
+        'Content-Type': 'application/json',
+        Cookie: cookie,
+        Origin: 'https://bonifacio.work',
+        'X-CSRF-Token': session.csrfToken,
+        'If-Match': session.revision,
+      },
+      body: JSON.stringify({ ...passwordBody, currentPassword: 'wrong-member-password' }),
+    });
+    assert.equal(wrongCurrentResponse.status, 400);
+    assert.equal(verified.length, 1);
+    assert.equal(hashed.length, 0);
+
+    const targetInjectionResponse = await fetch(`${userApi}/account/password`, {
+      method: 'POST',
+      headers: {
+        ...memberHeaders,
+        'Content-Type': 'application/json',
+        Cookie: cookie,
+        Origin: 'https://bonifacio.work',
+        'X-CSRF-Token': session.csrfToken,
+        'If-Match': session.revision,
+      },
+      body: JSON.stringify({ ...passwordBody, username: 'owner' }),
+    });
+    assert.equal(targetInjectionResponse.status, 400);
+    assert.equal(verified.length, 1);
+
+    const changeResponse = await fetch(`${userApi}/account/password`, {
+      method: 'POST',
+      headers: {
+        ...memberHeaders,
+        'Content-Type': 'application/json',
+        Cookie: cookie,
+        Origin: 'https://bonifacio.work',
+        'X-CSRF-Token': session.csrfToken,
+        'If-Match': session.revision,
+      },
+      body: JSON.stringify(passwordBody),
+    });
+    assert.equal(changeResponse.status, 200);
+    const changed = await changeResponse.json();
+    assert.deepEqual(Object.keys(changed).sort(), ['changed', 'logoutUrl', 'revision']);
+    assert.equal(changed.changed, true);
+    assert.equal(
+      changed.logoutUrl,
+      '/sso/logout?rd=https%3A%2F%2Fbonifacio.work%2Fsso%2Fuser%2F',
+    );
+    assert.match(changed.revision, /^[a-f0-9]{64}$/);
+    assert.equal(JSON.stringify(changed).includes('ChosenMember12!'), false);
+    assert.deepEqual(hashed, ['ChosenMember12!']);
+    const stored = await new UserStore(path).read();
+    assert.equal(stored.users.member.password, changedDigest);
+    assert.equal(stored.users.owner.password, digest);
+    assert.equal(stored.users.delegate.password, digest);
+
+    const ownerSessionResponse = await fetch(`${userApi}/session`, {
+      headers: {
+        ...memberHeaders,
+        'Remote-User': 'owner',
+        'Remote-Name': 'Owner',
+        'Remote-Email': 'owner@bonifacio.work',
+        'Remote-Groups': 'user,admin,chief-admin,portfolio-v2',
+      },
+    });
+    assert.equal(ownerSessionResponse.status, 200);
+    const ownerSession = await ownerSessionResponse.json();
+    assert.equal(ownerSession.profile.role, 'chief-admin');
+    assert.equal(ownerSession.canManageUsers, true);
+
+    const delegateHeaders = {
+      ...memberHeaders,
+      'Remote-User': 'delegate',
+      'Remote-Name': 'Delegate',
+      'Remote-Email': 'delegate@bonifacio.work',
+      'Remote-Groups': 'user,admin,portfolio-v2,access-monitor',
+    };
+    const delegateUserResponse = await fetch(`${userApi}/session`, { headers: delegateHeaders });
+    assert.equal(delegateUserResponse.status, 200);
+    assert.equal((await delegateUserResponse.json()).canManageUsers, true);
+    const delegateAdminResponse = await fetch(`${service}/sso/admin/api/session`, {
+      headers: delegateHeaders,
+    });
+    assert.equal(delegateAdminResponse.status, 200);
+    const adminModelResponse = await fetch(`${service}/sso/admin/ui-model.js`, {
+      headers: delegateHeaders,
+    });
+    assert.equal(adminModelResponse.status, 200);
+    assert.match(adminModelResponse.headers.get('content-type') ?? '', /^text\/javascript/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('self-service rejects malformed, forged, missing, and disabled identities', async () => {
+  const edgeSecret = 'test-edge-secret-with-at-least-32-bytes';
+  const value = database();
+  value.users.disabled = {
+    disabled: true,
+    displayname: 'Disabled',
+    password: digest,
+    email: 'disabled@example.com',
+    groups: groupsForAssignment('user', []),
+  };
+  const store = {
+    async read() {
+      return value;
+    },
+    async readVersioned() {
+      return { database: value, revision: 'b'.repeat(64) };
+    },
+  };
+  const server = createServer(createHandler({ store, edgeSecret }));
+  try {
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', resolve);
+    });
+    const address = server.address();
+    assert.ok(address && typeof address === 'object');
+    const url = `http://127.0.0.1:${address.port}/sso/user/api/session`;
+    const valid = {
+      'Remote-User': 'member',
+      'Remote-Name': 'Member',
+      'Remote-Email': 'member@example.com',
+      'Remote-Groups': 'user,portfolio-v2,access-feelmyrythm',
+      'X-Portfolio-Edge-Secret': edgeSecret,
+    };
+    for (const headers of [
+      { ...valid, 'Remote-User': 'Member' },
+      { ...valid, 'Remote-Email': 'MEMBER@example.com' },
+      { ...valid, 'Remote-Groups': 'user, portfolio-v2,access-feelmyrythm' },
+      { ...valid, 'Remote-Groups': 'user,portfolio-v2,access-feelmyrythm,' },
+    ]) {
+      const response = await fetch(url, { headers });
+      assert.equal(response.status, 401);
+      assert.equal((await response.json()).error, 'invalid_identity');
+    }
+    for (const headers of [
+      { ...valid, 'Remote-Name': 'Forged' },
+      { ...valid, 'Remote-Email': 'forged@example.com' },
+      { ...valid, 'Remote-Groups': 'user,portfolio-v2' },
+      { ...valid, 'Remote-User': 'missing', 'Remote-Name': 'Missing' },
+      {
+        ...valid,
+        'Remote-User': 'disabled',
+        'Remote-Name': 'Disabled',
+        'Remote-Email': 'disabled@example.com',
+        'Remote-Groups': 'user,portfolio-v2',
+      },
+    ]) {
+      const response = await fetch(url, { headers });
+      assert.equal(response.status, 403);
+      assert.equal((await response.json()).error, 'user_required');
+    }
+    const untrustedResponse = await fetch(url, {
+      headers: { ...valid, 'X-Portfolio-Edge-Secret': 'wrong-secret' },
+    });
+    assert.equal(untrustedResponse.status, 401);
+    assert.equal((await untrustedResponse.json()).error, 'untrusted_edge');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('self-service mutation rechecks the exact user under the writer lock', async () => {
+  const edgeSecret = 'test-edge-secret-with-at-least-32-bytes';
+  let verified = 0;
+  let hashed = 0;
+  const store = {
+    async read() {
+      return database();
+    },
+    async readVersioned() {
+      return { database: database(), revision: 'c'.repeat(64) };
+    },
+    async mutate({ transform }) {
+      const locked = database();
+      locked.users.member.disabled = true;
+      await transform(locked);
+    },
+  };
+  const server = createServer(createHandler({
+    store,
+    edgeSecret,
+    verifyCredential: async () => {
+      verified += 1;
+      return true;
+    },
+    hashCredential: async () => {
+      hashed += 1;
+      return changedDigest;
+    },
+  }));
+  try {
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', resolve);
+    });
+    const address = server.address();
+    assert.ok(address && typeof address === 'object');
+    const base = `http://127.0.0.1:${address.port}/sso/user/api`;
+    const headers = {
+      'Remote-User': 'member',
+      'Remote-Name': 'Member',
+      'Remote-Email': 'member@example.com',
+      'Remote-Groups': 'user,portfolio-v2,access-feelmyrythm',
+      'X-Portfolio-Edge-Secret': edgeSecret,
+    };
+    const sessionResponse = await fetch(`${base}/session`, { headers });
+    const session = await sessionResponse.json();
+    const cookie = sessionResponse.headers.get('set-cookie')?.split(';', 1)[0];
+    const response = await fetch(`${base}/account/password`, {
+      method: 'POST',
+      headers: {
+        ...headers,
+        'Content-Type': 'application/json',
+        Cookie: cookie,
+        Origin: 'https://bonifacio.work',
+        'X-CSRF-Token': session.csrfToken,
+        'If-Match': session.revision,
+      },
+      body: JSON.stringify({
+        currentPassword: 'current-member-password',
+        newPassword: 'ChosenMember12!',
+        confirmPassword: 'ChosenMember12!',
+      }),
+    });
+    assert.equal(response.status, 403);
+    assert.equal((await response.json()).error, 'user_required');
+    assert.equal(verified, 0);
+    assert.equal(hashed, 0);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('self-service limits each account to five crypto attempts per rolling ten minutes', async () => {
+  const edgeSecret = 'test-edge-secret-with-at-least-32-bytes';
+  let now = 1_000;
+  let writerCalls = 0;
+  let verificationCalls = 0;
+  let hashCalls = 0;
+  const revision = 'd'.repeat(64);
+  const store = {
+    async read() {
+      return database();
+    },
+    async readVersioned() {
+      return { database: database(), revision };
+    },
+    async mutate({ transform }) {
+      writerCalls += 1;
+      await transform(database());
+    },
+  };
+  const server = createServer(createHandler({
+    store,
+    edgeSecret,
+    limiterNow: () => now,
+    verifyCredential: async () => {
+      verificationCalls += 1;
+      return false;
+    },
+    hashCredential: async () => {
+      hashCalls += 1;
+      return changedDigest;
+    },
+  }));
+  try {
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', resolve);
+    });
+    const address = server.address();
+    assert.ok(address && typeof address === 'object');
+    const base = `http://127.0.0.1:${address.port}/sso/user/api`;
+    const memberHeaders = {
+      'Remote-User': 'member',
+      'Remote-Name': 'Member',
+      'Remote-Email': 'member@example.com',
+      'Remote-Groups': 'user,portfolio-v2,access-feelmyrythm',
+      'X-Portfolio-Edge-Secret': edgeSecret,
+    };
+    const memberSessionResponse = await fetch(`${base}/session`, { headers: memberHeaders });
+    const memberSession = await memberSessionResponse.json();
+    const memberCookie = memberSessionResponse.headers.get('set-cookie')?.split(';', 1)[0];
+    const attempt = (headers, session, cookie) => fetch(`${base}/account/password`, {
+      method: 'POST',
+      headers: {
+        ...headers,
+        'Content-Type': 'application/json',
+        Cookie: cookie,
+        Origin: 'https://bonifacio.work',
+        'X-CSRF-Token': session.csrfToken,
+        'If-Match': session.revision,
+      },
+      body: JSON.stringify({
+        currentPassword: 'wrong-current-password',
+        newPassword: 'AnotherStrong12!',
+        confirmPassword: 'AnotherStrong12!',
+      }),
+    });
+
+    for (let index = 0; index < 6; index += 1) {
+      const staleResponse = await fetch(`${base}/account/password`, {
+        method: 'POST',
+        headers: {
+          ...memberHeaders,
+          'Content-Type': 'application/json',
+          Cookie: memberCookie,
+          Origin: 'https://bonifacio.work',
+          'X-CSRF-Token': memberSession.csrfToken,
+          'If-Match': 'f'.repeat(64),
+        },
+        body: JSON.stringify({
+          currentPassword: 'wrong-current-password',
+          newPassword: 'AnotherStrong12!',
+          confirmPassword: 'AnotherStrong12!',
+        }),
+      });
+      assert.equal(staleResponse.status, 409);
+    }
+    assert.equal(writerCalls, 0);
+    assert.equal(verificationCalls, 0);
+
+    for (let index = 0; index < 5; index += 1) {
+      const response = await attempt(memberHeaders, memberSession, memberCookie);
+      assert.equal(response.status, 400);
+      assert.equal((await response.json()).error, 'current_password_invalid');
+    }
+    assert.equal(writerCalls, 5);
+    assert.equal(verificationCalls, 5);
+    assert.equal(hashCalls, 0);
+
+    const limitedResponse = await attempt(memberHeaders, memberSession, memberCookie);
+    assert.equal(limitedResponse.status, 429);
+    assert.equal((await limitedResponse.json()).error, 'password_attempt_rate_limited');
+    assert.equal(writerCalls, 5);
+    assert.equal(verificationCalls, 5);
+    assert.equal(hashCalls, 0);
+
+    const ownerHeaders = {
+      ...memberHeaders,
+      'Remote-User': 'owner',
+      'Remote-Name': 'Owner',
+      'Remote-Email': 'owner@bonifacio.work',
+      'Remote-Groups': 'user,admin,chief-admin,portfolio-v2',
+    };
+    const ownerSessionResponse = await fetch(`${base}/session`, { headers: ownerHeaders });
+    const ownerSession = await ownerSessionResponse.json();
+    const ownerCookie = ownerSessionResponse.headers.get('set-cookie')?.split(';', 1)[0];
+    const ownerResponse = await attempt(ownerHeaders, ownerSession, ownerCookie);
+    assert.equal(ownerResponse.status, 400);
+    assert.equal(writerCalls, 6);
+    assert.equal(verificationCalls, 6);
+
+    now += 10 * 60 * 1000 + 1;
+    const expiredResponse = await attempt(memberHeaders, memberSession, memberCookie);
+    assert.equal(expiredResponse.status, 400);
+    assert.equal(writerCalls, 7);
+    assert.equal(verificationCalls, 7);
+    assert.equal(hashCalls, 0);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('self-service reserves three successful changes per rolling day without charging failures', async () => {
+  const edgeSecret = 'test-edge-secret-with-at-least-32-bytes';
+  let now = 10_000;
+  let writerCalls = 0;
+  let verificationCalls = 0;
+  let hashCalls = 0;
+  const revision = 'e'.repeat(64);
+  const store = {
+    async read() {
+      return database();
+    },
+    async readVersioned() {
+      return { database: database(), revision };
+    },
+    async mutate({ transform }) {
+      writerCalls += 1;
+      await transform(database());
+    },
+  };
+  const server = createServer(createHandler({
+    store,
+    edgeSecret,
+    limiterNow: () => now,
+    verifyCredential: async (password) => {
+      verificationCalls += 1;
+      return password === 'accepted-current-password';
+    },
+    hashCredential: async () => {
+      hashCalls += 1;
+      return changedDigest;
+    },
+  }));
+  try {
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', resolve);
+    });
+    const address = server.address();
+    assert.ok(address && typeof address === 'object');
+    const base = `http://127.0.0.1:${address.port}/sso/user/api`;
+    const headers = {
+      'Remote-User': 'member',
+      'Remote-Name': 'Member',
+      'Remote-Email': 'member@example.com',
+      'Remote-Groups': 'user,portfolio-v2,access-feelmyrythm',
+      'X-Portfolio-Edge-Secret': edgeSecret,
+    };
+    const sessionResponse = await fetch(`${base}/session`, { headers });
+    const session = await sessionResponse.json();
+    const cookie = sessionResponse.headers.get('set-cookie')?.split(';', 1)[0];
+    const change = (currentPassword) => fetch(`${base}/account/password`, {
+      method: 'POST',
+      headers: {
+        ...headers,
+        'Content-Type': 'application/json',
+        Cookie: cookie,
+        Origin: 'https://bonifacio.work',
+        'X-CSRF-Token': session.csrfToken,
+        'If-Match': session.revision,
+      },
+      body: JSON.stringify({
+        currentPassword,
+        newPassword: 'DailyStrongPass1!',
+        confirmPassword: 'DailyStrongPass1!',
+      }),
+    });
+
+    const failedResponse = await change('wrong-current-password');
+    assert.equal(failedResponse.status, 400);
+    assert.equal((await failedResponse.json()).error, 'current_password_invalid');
+    for (let index = 0; index < 3; index += 1) {
+      const response = await change('accepted-current-password');
+      assert.equal(response.status, 200);
+    }
+    assert.equal(writerCalls, 4);
+    assert.equal(verificationCalls, 4);
+    assert.equal(hashCalls, 3);
+
+    const limitedResponse = await change('accepted-current-password');
+    assert.equal(limitedResponse.status, 429);
+    assert.equal((await limitedResponse.json()).error, 'password_change_rate_limited');
+    assert.equal(writerCalls, 4);
+    assert.equal(verificationCalls, 4);
+    assert.equal(hashCalls, 3);
+
+    now += 24 * 60 * 60 * 1000 + 1;
+    const expiredResponse = await change('accepted-current-password');
+    assert.equal(expiredResponse.status, 200);
+    assert.equal(writerCalls, 5);
+    assert.equal(verificationCalls, 5);
+    assert.equal(hashCalls, 4);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test('admin mutation rechecks central admin state before spawning a password hash', async () => {
   const edgeSecret = 'test-edge-secret-with-at-least-32-bytes';
   let generated = 0;
@@ -613,6 +1342,7 @@ test('admin mutation rechecks central admin state before spawning a password has
     const base = `http://127.0.0.1:${address.port}/sso/admin/api`;
     const headers = {
       'Remote-User': 'owner',
+      'Remote-Name': 'Owner',
       'Remote-Email': 'owner@bonifacio.work',
       'Remote-Groups': 'user,admin,chief-admin,portfolio-v2',
       'X-Portfolio-Edge-Secret': edgeSecret,

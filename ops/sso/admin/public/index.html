@@ -8,98 +8,188 @@
     <link rel="stylesheet" href="/sso/admin/admin.css" />
   </head>
   <body>
-    <main class="shell">
-      <header class="hero">
+    <a class="skip-link" href="#directory">사용자 목록으로 건너뛰기</a>
+
+    <div class="admin-shell">
+      <aside class="context-rail" aria-label="사용자 관리 문맥">
         <div>
-          <p class="eyebrow">BONIFACIO SSO</p>
+          <a class="brand" href="/">BONIFACIO</a>
+          <p class="mode-label">관리자 모드</p>
           <h1>사용자 관리</h1>
-          <p>중앙 로그인 계정을 발급하고 사용자별 앱 접근 권한을 관리합니다.</p>
+          <p class="mode-description">계정 상태와 서비스 접근 권한을 한곳에서 관리합니다.</p>
         </div>
-        <div class="actor" aria-live="polite">
-          <span>로그인한 관리자</span>
+
+        <dl class="summary-grid" aria-label="가입자 요약">
+          <div><dt>전체</dt><dd id="metric-total">—</dd></div>
+          <div><dt>활성</dt><dd id="metric-active">—</dd></div>
+          <div><dt>관리자</dt><dd id="metric-administrators">—</dd></div>
+          <div><dt>비활성</dt><dd id="metric-disabled">—</dd></div>
+        </dl>
+
+        <button id="open-create" class="primary-action" type="button" disabled>새 사용자 발급</button>
+
+        <nav class="context-nav" aria-label="계정 메뉴">
+          <a aria-current="page" href="/sso/admin/">사용자 관리</a>
+          <a href="/sso/user/">내 정보</a>
+          <a href="/">포트폴리오 홈</a>
+        </nav>
+
+        <div class="actor-card" aria-live="polite">
+          <span>로그인 계정</span>
           <strong id="actor">확인 중…</strong>
           <a href="/sso/logout?rd=https%3A%2F%2Fbonifacio.work%2F">로그아웃</a>
         </div>
-      </header>
+      </aside>
 
-      <div id="message" class="message" role="status" aria-live="polite" hidden></div>
-
-      <section class="panel" aria-labelledby="password-title">
-        <div class="panel-heading">
+      <main id="directory" class="directory-workspace">
+        <header class="workspace-heading">
           <div>
-            <p class="eyebrow">MY PASSWORD</p>
-            <h2 id="password-title">내 비밀번호 변경</h2>
+            <p class="section-label">DIRECTORY</p>
+            <h2>가입자 목록</h2>
+            <p>행을 선택하면 계정 정보와 권한을 편집할 수 있습니다.</p>
           </div>
-          <p>현재 비밀번호를 확인한 뒤 원하는 새 비밀번호로 바로 변경합니다.</p>
-        </div>
-        <form id="password-form" class="password-form">
-          <label>
-            현재 비밀번호
-            <input name="currentPassword" required type="password" maxlength="128" autocomplete="current-password" />
-          </label>
-          <label>
-            새 비밀번호
-            <input name="newPassword" required type="password" minlength="4" maxlength="128" autocomplete="new-password" />
-          </label>
-          <label>
-            새 비밀번호 확인
-            <input name="confirmPassword" required type="password" minlength="4" maxlength="128" autocomplete="new-password" />
-          </label>
-          <button id="password-submit" type="submit" disabled>비밀번호 변경</button>
-        </form>
-      </section>
+          <button id="refresh" class="quiet-button" type="button">새로고침</button>
+        </header>
 
-      <section class="panel" aria-labelledby="create-title">
-        <div class="panel-heading">
+        <section class="filter-bar" aria-label="사용자 검색과 필터">
+          <label class="search-field">
+            <span>검색</span>
+            <input id="search" type="search" placeholder="이름, 아이디, 이메일" autocomplete="off" />
+          </label>
+          <label>
+            <span>역할</span>
+            <select id="role-filter">
+              <option value="all">모든 역할</option>
+              <option value="user">일반 사용자</option>
+              <option value="admin">관리자</option>
+              <option value="chief-admin">최고 관리자</option>
+            </select>
+          </label>
+          <label>
+            <span>상태</span>
+            <select id="status-filter">
+              <option value="all">모든 상태</option>
+              <option value="active">활성</option>
+              <option value="disabled">비활성</option>
+            </select>
+          </label>
+          <label>
+            <span>서비스</span>
+            <select id="application-filter">
+              <option value="all">모든 서비스</option>
+            </select>
+          </label>
+        </section>
+
+        <div class="results-heading">
+          <p id="result-count" aria-live="polite">목록을 불러오는 중입니다.</p>
+          <p>한 페이지에 30명</p>
+        </div>
+
+        <section class="directory-table" aria-label="가입자 목록">
+          <div class="directory-columns" aria-hidden="true">
+            <span>계정</span><span>역할</span><span>서비스 접근</span><span>상태</span><span>작업</span>
+          </div>
+          <div id="users" class="users" role="listbox" aria-label="편집할 사용자 선택"></div>
+          <div id="empty-state" class="empty-state" hidden>
+            <strong>조건에 맞는 사용자가 없습니다.</strong>
+            <span>검색어나 필터를 바꿔 보세요.</span>
+          </div>
+        </section>
+
+        <nav class="pagination" aria-label="가입자 목록 페이지">
+          <button id="previous-page" class="quiet-button" type="button">이전</button>
+          <span id="page-status">1 / 1</span>
+          <button id="next-page" class="quiet-button" type="button">다음</button>
+        </nav>
+      </main>
+    </div>
+
+    <div id="message" class="message" role="status" aria-live="polite" hidden></div>
+
+    <dialog id="create-dialog" aria-labelledby="create-title" aria-describedby="create-description">
+      <form id="create-form" class="dialog-card">
+        <header class="dialog-heading">
           <div>
-            <p class="eyebrow">NEW ACCOUNT</p>
+            <p class="section-label">NEW ACCOUNT</p>
             <h2 id="create-title">새 사용자 발급</h2>
+            <p id="create-description">기본 정보와 처음 사용할 서비스를 지정합니다.</p>
           </div>
-          <p>24자리 임시 비밀번호는 생성 직후 한 번만 표시됩니다.</p>
+          <button class="icon-button" type="button" data-close-dialog aria-label="새 사용자 발급 닫기">×</button>
+        </header>
+
+        <div class="identity-grid">
+          <label>아이디<input name="username" required pattern="[a-z0-9][a-z0-9_-]{0,63}" autocomplete="off" autofocus /></label>
+          <label>표시 이름<input name="displayName" required maxlength="120" autocomplete="name" /></label>
+          <label class="wide-field">이메일<input name="email" required type="email" maxlength="254" autocomplete="email" /></label>
         </div>
-        <form id="create-form" class="form-grid">
-          <label>
-            아이디
-            <input name="username" required pattern="[a-z0-9][a-z0-9_-]{0,63}" autocomplete="off" />
-          </label>
-          <label>
-            표시 이름
-            <input name="displayName" required maxlength="120" autocomplete="name" />
-          </label>
-          <label>
-            이메일
-            <input name="email" required type="email" maxlength="254" autocomplete="email" />
-          </label>
-          <div id="create-authorization" class="authorization-editor"></div>
+        <div id="create-authorization" class="authorization-editor"></div>
+        <p class="credential-note">24자리 임시 비밀번호는 발급 직후 한 번만 표시됩니다.</p>
+        <footer class="dialog-actions">
+          <button class="quiet-button" type="button" data-close-dialog>취소</button>
           <button id="create-submit" type="submit" disabled>계정 발급</button>
-        </form>
-      </section>
+        </footer>
+      </form>
+    </dialog>
 
-      <section class="panel" aria-labelledby="users-title">
-        <div class="panel-heading">
+    <dialog id="user-dialog" aria-labelledby="user-dialog-title" aria-describedby="user-dialog-description">
+      <form id="user-form" class="dialog-card">
+        <header class="dialog-heading">
           <div>
-            <p class="eyebrow">DIRECTORY</p>
-            <h2 id="users-title">가입자 목록</h2>
+            <p class="section-label">ACCOUNT DETAIL</p>
+            <h2 id="user-dialog-title">사용자 정보</h2>
+            <p id="user-dialog-description">계정 상태와 접근 권한을 검토합니다.</p>
           </div>
-          <button id="refresh" class="secondary" type="button">새로고침</button>
-        </div>
-        <div id="users" class="users" aria-live="polite"></div>
-      </section>
-    </main>
+          <button class="icon-button" type="button" data-close-dialog aria-label="사용자 정보 닫기">×</button>
+        </header>
 
-    <dialog id="credential-dialog">
-      <form method="dialog" class="credential-card">
-        <p class="eyebrow">ONE-TIME CREDENTIAL</p>
-        <h2>임시 로그인 정보</h2>
-        <p>이 비밀번호는 다시 조회할 수 없습니다. 지금 안전하게 전달하세요.</p>
+        <div class="selected-identity">
+          <strong id="selected-display-name"></strong>
+          <span id="selected-username"></span>
+        </div>
+        <div class="identity-grid">
+          <label>표시 이름<input id="edit-display-name" required maxlength="120" autocomplete="name" autofocus /></label>
+          <label>이메일<input id="edit-email" type="email" disabled /></label>
+        </div>
+        <div id="edit-authorization" class="authorization-editor"></div>
+        <label class="status-control">
+          <input id="edit-disabled" type="checkbox" />
+          <span><strong>로그인 비활성화</strong><small>이 계정의 새 로그인과 서비스 접근을 차단합니다.</small></span>
+        </label>
+        <p id="edit-lock-note" class="lock-note" hidden></p>
+
+        <section class="danger-zone" aria-labelledby="credential-reset-title">
+          <div>
+            <h3 id="credential-reset-title">임시 비밀번호 재발급</h3>
+            <p>기존 비밀번호를 즉시 무효화합니다. 사용자에게 안전한 채널로 전달하세요.</p>
+          </div>
+          <button id="reset-password" class="danger-button" type="button">재발급</button>
+        </section>
+
+        <footer class="dialog-actions sticky-actions">
+          <button class="quiet-button" type="button" data-close-dialog>취소</button>
+          <button id="save-user" type="submit">변경 저장</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog id="credential-dialog" aria-labelledby="credential-title" aria-describedby="credential-description">
+      <form method="dialog" class="dialog-card credential-card">
+        <header class="dialog-heading">
+          <div>
+            <p class="section-label">ONE-TIME CREDENTIAL</p>
+            <h2 id="credential-title">임시 로그인 정보</h2>
+            <p id="credential-description">이 비밀번호는 다시 조회할 수 없습니다.</p>
+          </div>
+        </header>
         <dl>
           <div><dt>아이디</dt><dd id="credential-username"></dd></div>
           <div><dt>임시 비밀번호</dt><dd><code id="credential-password"></code></dd></div>
         </dl>
-        <div class="dialog-actions">
+        <footer class="dialog-actions">
           <button id="copy-password" type="button">비밀번호 복사</button>
-          <button class="secondary" value="close">확인</button>
-        </div>
+          <button class="quiet-button" value="close">확인</button>
+        </footer>
       </form>
     </dialog>
 

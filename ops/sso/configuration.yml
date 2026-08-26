@@ -43,6 +43,13 @@ access_control:
         - bonifacio.work
         - www.bonifacio.work
       resources:
+        - '^/sso/user(?:[/?].*)?$'
+      subject: group:user
+      policy: one_factor
+    - domain:
+        - bonifacio.work
+        - www.bonifacio.work
+      resources:
         - '^/sso/admin/api/editor-access(?:\?.*)?$'
       subject: group:user
       policy: one_factor
