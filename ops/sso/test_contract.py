@@ -133,18 +133,37 @@ class PortfolioSsoContractTests(unittest.TestCase):
         server = (ROOT / "ops/sso/admin/server.mjs").read_text(encoding="utf-8")
         library = (ROOT / "ops/sso/admin/lib.mjs").read_text(encoding="utf-8")
         page = (ROOT / "ops/sso/admin/public/index.html").read_text(encoding="utf-8")
-        admin_rule = configuration.index("subject: group:admin")
+        editor_rule = configuration.index("'^/sso/admin/api/editor-access")
+        editor_user_rule = configuration.index("subject: group:user", editor_rule)
+        admin_rule = configuration.index("subject: group:admin", editor_user_rule)
         admin_deny = configuration.index("policy: deny", admin_rule)
-        developer_rule = configuration.index("subject: group:developer", admin_deny)
-        developer_deny = configuration.index("policy: deny", developer_rule)
-        user_rule = configuration.index("subject: group:user", developer_deny)
-        user_deny = configuration.index("policy: deny", user_rule)
+        chief_rule = configuration.index("subject: group:chief-admin", admin_deny)
+        user_rule = configuration.index("subject: group:user", chief_rule)
+        product_deny = configuration.index("resources: *protected-app-resources")
 
+        self.assertLess(editor_rule, admin_rule)
+        self.assertLess(editor_user_rule, admin_rule)
         self.assertLess(admin_rule, admin_deny)
-        self.assertLess(admin_deny, developer_rule)
-        self.assertLess(developer_rule, developer_deny)
-        self.assertLess(developer_deny, user_rule)
-        self.assertLess(user_rule, user_deny)
+        self.assertLess(admin_deny, chief_rule)
+        self.assertLess(chief_rule, user_rule)
+        self.assertLess(user_rule, product_deny)
+        self.assertNotIn("subject: group:developer", configuration)
+        for group in (
+            "access-react",
+            "access-vue",
+            "access-dukkeobi",
+            "access-ddit-finalproject",
+            "access-monitor",
+            "access-pilgrimage",
+            "access-multtara",
+            "access-feelmyrythm",
+            "access-garak",
+        ):
+            self.assertIn(f"subject: group:{group}", configuration)
+        pilgrimage_rule = configuration.index("subject: group:access-pilgrimage")
+        pilgrimage_block = configuration[configuration.rfind("    - domain:", 0, pilgrimage_rule):pilgrimage_rule]
+        self.assertIn("'^/pilgrimage(?:[/?].*)?$'", pilgrimage_block)
+        self.assertIn("'^/api(?:[/?].*)?$'", pilgrimage_block)
         self.assertIn("'^/monitor(?:[/?].*)?$'", configuration)
         self.assertIn("'^/(?:\\?.*)?$'", configuration)
         self.assertIn("'^/index\\.html(?:\\?.*)?$'", configuration)
@@ -180,21 +199,37 @@ class PortfolioSsoContractTests(unittest.TestCase):
         contract = json.loads(
             (ROOT / "ops/sso/role-contract.json").read_text(encoding="utf-8")
         )
+        self.assertEqual(contract["version"], 2)
+        self.assertEqual(contract["header"], "Remote-Groups")
+        self.assertEqual(contract["separator"], ",")
+        self.assertEqual(contract["roles"], ["user", "admin", "chief-admin"])
+        self.assertEqual(contract["administratorRole"], "admin")
+        self.assertEqual(contract["globalAdministratorRole"], "chief-admin")
+        self.assertEqual(contract["hierarchy"], "prefix")
+        self.assertEqual(contract["markerGroup"], "portfolio-v2")
+        self.assertEqual(contract["applicationGroupPrefix"], "access-")
         self.assertEqual(
-            contract,
-            {
-                "version": 1,
-                "header": "Remote-Groups",
-                "separator": ",",
-                "roles": ["user", "developer", "admin"],
-                "administratorRole": "admin",
-                "hierarchy": "prefix",
-            },
+            [(app["id"], app["group"]) for app in contract["applications"]],
+            [
+                ("react", "access-react"),
+                ("vue", "access-vue"),
+                ("dukkeobi", "access-dukkeobi"),
+                ("ddit-finalproject", "access-ddit-finalproject"),
+                ("monitor", "access-monitor"),
+                ("pilgrimage", "access-pilgrimage"),
+                ("multtara", "access-multtara"),
+                ("feelmyrythm", "access-feelmyrythm"),
+                ("garak", "access-garak"),
+            ],
         )
         example = (ROOT / "ops/sso/users_database.example.yml").read_text(
             encoding="utf-8"
         )
-        self.assertIn("      - user\n      - developer\n      - admin\n", example)
+        self.assertIn(
+            "      - user\n      - admin\n      - chief-admin\n      - portfolio-v2\n",
+            example,
+        )
+        self.assertNotIn("      - developer\n", example)
         self.assertNotIn("      - owners\n", example)
         self.assertNotIn("      - users\n", example)
 

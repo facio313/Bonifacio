@@ -16,12 +16,21 @@ import { pathToFileURL } from 'node:url';
 
 import YAML from 'yaml';
 
-import { UserStore, parseUserDatabase, serializeUserDatabase } from './lib.mjs';
+import {
+  APPLICATIONS,
+  UserStore,
+  groupsForAssignment,
+  parseUserDatabase,
+  serializeUserDatabase,
+} from './lib.mjs';
 
 const TARGET_USERNAME = 'cks';
 const TARGET_EMAIL = 'cks@bonifacio.work';
-const LEGACY_GROUPS = Object.freeze(['owners', 'users']);
-const CANONICAL_ROLES = Object.freeze(['user', 'developer', 'admin']);
+const LEGACY_USER_GROUPS = Object.freeze(['user']);
+const LEGACY_DEVELOPER_GROUPS = Object.freeze(['user', 'developer']);
+const LEGACY_ADMIN_GROUPS = Object.freeze(['user', 'developer', 'admin']);
+const ALL_APPLICATIONS = Object.freeze(APPLICATIONS.map((application) => application.id));
+const USER_APPLICATIONS = Object.freeze(ALL_APPLICATIONS.filter((id) => id !== 'monitor'));
 const EXPECTED_FIELDS = Object.freeze(['disabled', 'displayname', 'email', 'groups', 'password']);
 
 export class RoleMigrationError extends Error {
@@ -50,6 +59,29 @@ function safeEqual(left, right) {
   return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
 }
 
+function exactGroups(value, expected) {
+  return (
+    Array.isArray(value)
+    && value.length === expected.length
+    && value.every((group, index) => group === expected[index])
+  );
+}
+
+function migrateGroups(username, groups) {
+  if (exactGroups(groups, LEGACY_USER_GROUPS)) {
+    return groupsForAssignment('user', USER_APPLICATIONS);
+  }
+  if (exactGroups(groups, LEGACY_DEVELOPER_GROUPS)) {
+    return groupsForAssignment('user', ALL_APPLICATIONS);
+  }
+  if (exactGroups(groups, LEGACY_ADMIN_GROUPS)) {
+    return username === TARGET_USERNAME
+      ? groupsForAssignment('chief-admin', [])
+      : groupsForAssignment('admin', ALL_APPLICATIONS);
+  }
+  fail('unexpected_legacy_record', `The ${username} legacy assignment does not match the migration contract.`);
+}
+
 function parseLegacyCandidate(source) {
   let document;
   try {
@@ -66,42 +98,53 @@ function parseLegacyCandidate(source) {
     || !plainObject(root.users)
     || Object.keys(root).length !== 1
     || !Object.hasOwn(root, 'users')
-    || Object.keys(root.users).length !== 1
+    || Object.keys(root.users).length === 0
     || !Object.hasOwn(root.users, TARGET_USERNAME)
   ) {
-    fail('unexpected_identity_set', 'Expected exactly one cks identity.');
+    fail('unexpected_identity_set', 'Expected a non-empty identity set containing cks.');
   }
-  const record = root.users[TARGET_USERNAME];
+
+  const target = root.users[TARGET_USERNAME];
   if (
-    !plainObject(record)
-    || JSON.stringify(Object.keys(record).sort()) !== JSON.stringify(EXPECTED_FIELDS)
-    || record.disabled !== false
-    || record.email !== TARGET_EMAIL
-    || !Array.isArray(record.groups)
-    || JSON.stringify(record.groups) !== JSON.stringify(LEGACY_GROUPS)
+    !plainObject(target)
+    || JSON.stringify(Object.keys(target).sort()) !== JSON.stringify(EXPECTED_FIELDS)
+    || target.disabled !== false
+    || target.email !== TARGET_EMAIL
+    || !exactGroups(target.groups, LEGACY_ADMIN_GROUPS)
   ) {
     fail('unexpected_legacy_record', 'The cks legacy identity does not match the migration contract.');
   }
 
-  const preserved = {
-    disabled: record.disabled,
-    displayname: record.displayname,
-    password: record.password,
-    email: record.email,
-  };
-  const migrated = {
-    users: {
-      [TARGET_USERNAME]: {
-        ...preserved,
-        groups: [...CANONICAL_ROLES],
-      },
-    },
-  };
+  const migrated = { users: {} };
+  for (const [username, record] of Object.entries(root.users)) {
+    if (
+      !plainObject(record)
+      || JSON.stringify(Object.keys(record).sort()) !== JSON.stringify(EXPECTED_FIELDS)
+    ) {
+      fail('unexpected_legacy_record', `The ${username} legacy identity shape is invalid.`);
+    }
+    migrated.users[username] = {
+      disabled: record.disabled,
+      displayname: record.displayname,
+      password: record.password,
+      email: record.email,
+      groups: migrateGroups(username, record.groups),
+    };
+  }
+
   const candidateSource = serializeUserDatabase(migrated);
-  const validated = parseUserDatabase(candidateSource).users[TARGET_USERNAME];
-  for (const field of ['disabled', 'displayname', 'password', 'email']) {
-    if (validated[field] !== preserved[field]) {
-      fail('record_changed', 'A non-role identity field would change during migration.');
+  const validatedUsers = parseUserDatabase(candidateSource).users;
+  if (
+    Object.keys(validatedUsers).length !== Object.keys(root.users).length
+    || Object.keys(root.users).some((username) => !Object.hasOwn(validatedUsers, username))
+  ) {
+    fail('record_changed', 'The identity set would change during migration.');
+  }
+  for (const [username, record] of Object.entries(root.users)) {
+    for (const field of ['disabled', 'displayname', 'password', 'email']) {
+      if (validatedUsers[username][field] !== record[field]) {
+        fail('record_changed', `A non-assignment field would change for ${username}.`);
+      }
     }
   }
   return candidateSource;
@@ -239,7 +282,7 @@ export async function migrateRoleContract({ path, expectedRevision, apply = fals
       id: randomBytes(16).toString('hex'),
       at: new Date().toISOString(),
       actor: 'operator',
-      action: 'migrate_role_contract_v1',
+      action: 'migrate_role_and_access_contract_v2',
       target: TARGET_USERNAME,
     };
     await store.appendAudit({ ...auditBase, phase: 'prepared' });

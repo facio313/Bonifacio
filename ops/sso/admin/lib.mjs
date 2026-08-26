@@ -41,30 +41,71 @@ function loadRoleContract() {
   } catch {
     throw new Error('The central SSO role contract cannot be loaded.');
   }
-  const expectedRoles = ['user', 'developer', 'admin'];
+  const expectedRoles = ['user', 'admin', 'chief-admin'];
+  const expectedApplications = [
+    ['react', 'access-react'],
+    ['vue', 'access-vue'],
+    ['dukkeobi', 'access-dukkeobi'],
+    ['ddit-finalproject', 'access-ddit-finalproject'],
+    ['monitor', 'access-monitor'],
+    ['pilgrimage', 'access-pilgrimage'],
+    ['multtara', 'access-multtara'],
+    ['feelmyrythm', 'access-feelmyrythm'],
+    ['garak', 'access-garak'],
+  ];
   if (
     !plainObject(value)
-    || value.version !== 1
+    || value.version !== 2
     || value.header !== 'Remote-Groups'
     || value.separator !== ','
     || value.administratorRole !== 'admin'
+    || value.globalAdministratorRole !== 'chief-admin'
     || value.hierarchy !== 'prefix'
+    || value.markerGroup !== 'portfolio-v2'
+    || value.applicationGroupPrefix !== 'access-'
     || !Array.isArray(value.roles)
     || value.roles.length !== expectedRoles.length
     || value.roles.some((role, index) => role !== expectedRoles[index])
+    || !Array.isArray(value.applications)
+    || value.applications.length !== expectedApplications.length
+    || value.applications.some((application, index) => (
+      !plainObject(application)
+      || Object.keys(application).sort().join(',') !== 'group,id,label'
+      || application.id !== expectedApplications[index][0]
+      || application.group !== expectedApplications[index][1]
+      || typeof application.label !== 'string'
+      || !application.label
+    ))
   ) {
     throw new Error('The central SSO role contract is invalid.');
   }
   return Object.freeze({
     ...value,
     roles: Object.freeze([...value.roles]),
+    applications: Object.freeze(
+      value.applications.map((application) => Object.freeze({ ...application })),
+    ),
   });
 }
 
 export const ROLE_CONTRACT = loadRoleContract();
 export const ROLE_NAMES = ROLE_CONTRACT.roles;
 export const ADMIN_ROLE = ROLE_CONTRACT.administratorRole;
+export const CHIEF_ADMIN_ROLE = ROLE_CONTRACT.globalAdministratorRole;
+export const CONTRACT_MARKER_GROUP = ROLE_CONTRACT.markerGroup;
+export const APPLICATIONS = ROLE_CONTRACT.applications;
 const ALLOWED_ROLES = new Set(ROLE_NAMES);
+const APPLICATION_BY_ID = new Map(
+  APPLICATIONS.map((application) => [application.id, application]),
+);
+const APPLICATION_BY_GROUP = new Map(
+  APPLICATIONS.map((application) => [application.group, application]),
+);
+const LEGACY_ROLE_GROUPS = Object.freeze([
+  Object.freeze(['user']),
+  Object.freeze(['user', 'developer']),
+  Object.freeze(['user', 'developer', 'admin']),
+]);
 
 export class AdminError extends Error {
   constructor(status, code, message) {
@@ -137,44 +178,165 @@ export function normalizePassword(value, field = '새 비밀번호', minimumLeng
   return value;
 }
 
-export function normalizeRoles(
+export function normalizeRole(
   value,
   {
     status = 400,
-    code = 'invalid_roles',
-    message = '중앙 역할 구성이 올바르지 않습니다.',
+    code = 'invalid_role',
+    message = '중앙 역할이 올바르지 않습니다.',
   } = {},
 ) {
   const fail = () => {
     throw new AdminError(status, code, message);
   };
-  if (!Array.isArray(value) || value.length === 0) {
-    fail();
+  if (
+    typeof value !== 'string'
+    || value !== value.trim().toLowerCase()
+    || !GROUP.test(value)
+    || !ALLOWED_ROLES.has(value)
+  ) fail();
+  return value;
+}
+
+export function normalizeApplications(
+  value,
+  role,
+  {
+    status = 400,
+    code = 'invalid_applications',
+    message = '앱 접근 권한 구성이 올바르지 않습니다.',
+  } = {},
+) {
+  const fail = () => {
+    throw new AdminError(status, code, message);
+  };
+  if (!Array.isArray(value)) fail();
+  if (role === CHIEF_ADMIN_ROLE) {
+    if (value.length !== 0) fail();
+    return [];
   }
-  const roles = [];
+  const selected = new Set();
+  for (const item of value) {
+    if (
+      typeof item !== 'string'
+      || item !== item.trim().toLowerCase()
+      || !APPLICATION_BY_ID.has(item)
+      || selected.has(item)
+    ) fail();
+    selected.add(item);
+  }
+  const applications = APPLICATIONS
+    .map((application) => application.id)
+    .filter((id) => selected.has(id));
+  if (
+    applications.length !== value.length
+    || applications.some((id, index) => id !== value[index])
+  ) fail();
+  return applications;
+}
+
+export function groupsForAssignment(roleValue, applicationValues) {
+  const role = normalizeRole(roleValue);
+  const applications = normalizeApplications(applicationValues, role);
+  return [
+    ...ROLE_NAMES.slice(0, ROLE_NAMES.indexOf(role) + 1),
+    CONTRACT_MARKER_GROUP,
+    ...applications.map((id) => APPLICATION_BY_ID.get(id).group),
+  ];
+}
+
+export function normalizeGroups(
+  value,
+  {
+    status = 400,
+    code = 'invalid_groups',
+    message = '중앙 역할 및 앱 접근 권한 구성이 올바르지 않습니다.',
+  } = {},
+) {
+  const fail = () => {
+    throw new AdminError(status, code, message);
+  };
+  if (!Array.isArray(value) || value.length === 0) fail();
   const seen = new Set();
   for (const item of value) {
     if (
       typeof item !== 'string'
       || item !== item.trim().toLowerCase()
       || !GROUP.test(item)
-      || !ALLOWED_ROLES.has(item)
       || seen.has(item)
-    ) {
-      fail();
-    }
+      || (
+        !ALLOWED_ROLES.has(item)
+        && item !== CONTRACT_MARKER_GROUP
+        && !APPLICATION_BY_GROUP.has(item)
+      )
+    ) fail();
     seen.add(item);
-    roles.push(item);
   }
-  const highestIndex = Math.max(...roles.map((role) => ROLE_NAMES.indexOf(role)));
-  const expected = ROLE_NAMES.slice(0, highestIndex + 1);
-  if (
-    roles.length !== expected.length
-    || roles.some((role, index) => role !== expected[index])
-  ) {
+  const roleGroups = value.filter((group) => ALLOWED_ROLES.has(group));
+  if (roleGroups.length === 0) fail();
+  const role = roleGroups[roleGroups.length - 1];
+  const applicationIds = value
+    .filter((group) => APPLICATION_BY_GROUP.has(group))
+    .map((group) => APPLICATION_BY_GROUP.get(group).id);
+  let expected;
+  try {
+    expected = groupsForAssignment(role, applicationIds);
+  } catch {
     fail();
   }
-  return roles;
+  if (
+    value.length !== expected.length
+    || value.some((group, index) => group !== expected[index])
+  ) fail();
+  return value;
+}
+
+export function assignmentFromGroups(value, options = {}) {
+  const groups = normalizeGroups(value, options);
+  const role = [...groups].reverse().find((group) => ALLOWED_ROLES.has(group));
+  const applications = groups
+    .filter((group) => APPLICATION_BY_GROUP.has(group))
+    .map((group) => APPLICATION_BY_GROUP.get(group).id);
+  return { role, applications, groups: [...groups] };
+}
+
+function legacyAssignment(value) {
+  if (!Array.isArray(value)) return null;
+  const legacyIndex = LEGACY_ROLE_GROUPS.findIndex((candidate) => (
+    candidate.length === value.length
+    && candidate.every((group, index) => group === value[index])
+  ));
+  if (legacyIndex < 0) return null;
+  if (legacyIndex === 2) {
+    const groups = groupsForAssignment(CHIEF_ADMIN_ROLE, []);
+    return { role: CHIEF_ADMIN_ROLE, applications: [], groups, wireGroups: [...value] };
+  }
+  const applications = APPLICATIONS
+    .map((application) => application.id)
+    .filter((id) => legacyIndex === 1 || id !== 'monitor');
+  const groups = groupsForAssignment('user', applications);
+  return { role: 'user', applications, groups, wireGroups: [...value] };
+}
+
+export function assignmentFromWireGroups(value, options = {}) {
+  try {
+    const assignment = assignmentFromGroups(value, options);
+    return { ...assignment, wireGroups: [...assignment.groups], legacy: false };
+  } catch (canonicalError) {
+    const legacy = legacyAssignment(value);
+    if (legacy) return { ...legacy, legacy: true };
+    throw canonicalError;
+  }
+}
+
+export function normalizeStoredGroups(value, options = {}) {
+  try {
+    return normalizeGroups(value, options);
+  } catch (canonicalError) {
+    const legacy = legacyAssignment(value);
+    if (legacy) return legacy.groups;
+    throw canonicalError;
+  }
 }
 
 function normalizeRecord(username, value) {
@@ -193,10 +355,10 @@ function normalizeRecord(username, value) {
     displayname: normalizeDisplayName(value.displayname),
     password: value.password,
     email: normalizeEmail(value.email),
-    groups: normalizeRoles(value.groups, {
+    groups: normalizeStoredGroups(value.groups, {
       status: 500,
       code: 'invalid_database',
-      message: `${username} 사용자의 중앙 역할 구성이 올바르지 않습니다.`,
+      message: `${username} 사용자의 중앙 역할 및 앱 접근 권한 구성이 올바르지 않습니다.`,
     }),
   };
 }
@@ -236,6 +398,11 @@ export function parseUserDatabase(source) {
   if (Object.keys(users).length === 0) {
     throw new AdminError(500, 'invalid_database', '사용자 데이터베이스가 비어 있습니다.');
   }
+  if (!Object.values(users).some((record) => (
+    !record.disabled && record.groups.includes(CHIEF_ADMIN_ROLE)
+  ))) {
+    throw new AdminError(500, 'invalid_database', '활성 최고 관리자가 한 명 이상 필요합니다.');
+  }
   return { users };
 }
 
@@ -252,37 +419,90 @@ export function serializeUserDatabase(database) {
 export function publicUsers(database) {
   return Object.entries(database.users)
     .sort(([left], [right]) => left.localeCompare(right))
-    .map(([username, record]) => ({
-      username,
-      displayName: record.displayname,
-      email: record.email,
-      groups: [...record.groups],
-      disabled: record.disabled,
-    }));
+    .map(([username, record]) => {
+      const assignment = assignmentFromGroups(record.groups);
+      return {
+        username,
+        displayName: record.displayname,
+        email: record.email,
+        role: assignment.role,
+        applications: assignment.role === CHIEF_ADMIN_ROLE
+          ? APPLICATIONS.map((application) => application.id)
+          : assignment.applications,
+        disabled: record.disabled,
+      };
+    });
 }
 
 export function assertAdminMutationAllowed(database, actor, target, nextRecord) {
   const current = database.users[target];
   if (!current) throw new AdminError(404, 'user_not_found', '사용자를 찾을 수 없습니다.');
-  const wasAdmin = current.groups.includes(ADMIN_ROLE) && !current.disabled;
+  const actorRecord = database.users[actor.username];
+  const actorIsChief = actorRecord?.groups.includes(CHIEF_ADMIN_ROLE) ?? false;
   const remainsAdmin = nextRecord.groups.includes(ADMIN_ROLE) && !nextRecord.disabled;
-  if (actor === target && !remainsAdmin) {
+  const wasChief = current.groups.includes(CHIEF_ADMIN_ROLE);
+  const remainsChief = nextRecord.groups.includes(CHIEF_ADMIN_ROLE);
+  if (
+    actor.username === target
+    && (
+      current.disabled !== nextRecord.disabled
+      || current.groups.length !== nextRecord.groups.length
+      || current.groups.some((group, index) => group !== nextRecord.groups[index])
+    )
+  ) {
+    throw new AdminError(403, 'self_assignment_forbidden', '자신의 역할, 앱 권한 또는 활성 상태는 변경할 수 없습니다.');
+  }
+  if (
+    !actorIsChief
+    && (
+      current.groups.includes(ADMIN_ROLE)
+      || nextRecord.groups.includes(ADMIN_ROLE)
+    )
+  ) {
+    throw new AdminError(403, 'chief_admin_required', '관리자 계정 변경은 최고 관리자만 할 수 있습니다.');
+  }
+  if (!actorIsChief && (wasChief || remainsChief)) {
+    throw new AdminError(403, 'chief_admin_required', '최고 관리자 변경은 다른 최고 관리자만 할 수 있습니다.');
+  }
+  if (actor.username === target && !remainsAdmin) {
     throw new AdminError(409, 'self_lockout', '현재 로그인한 관리자 권한은 제거할 수 없습니다.');
   }
-  if (wasAdmin && !remainsAdmin) {
-    const otherEnabledAdmins = Object.entries(database.users).filter(
+  if (wasChief && (!remainsChief || nextRecord.disabled)) {
+    const otherEnabledChiefAdmins = Object.entries(database.users).filter(
       ([username, record]) =>
-        username !== target && !record.disabled && record.groups.includes(ADMIN_ROLE),
+        username !== target && !record.disabled && record.groups.includes(CHIEF_ADMIN_ROLE),
     );
-    if (otherEnabledAdmins.length === 0) {
-      throw new AdminError(409, 'last_admin', '마지막 활성 관리자는 비활성화할 수 없습니다.');
+    if (otherEnabledChiefAdmins.length === 0) {
+      throw new AdminError(409, 'last_chief_admin', '마지막 활성 최고 관리자는 비활성화하거나 강등할 수 없습니다.');
     }
+  }
+}
+
+export function assertAdminMayCreate(database, actor, role) {
+  const actorRecord = database.users[actor.username];
+  if (
+    role !== 'user'
+    && !actorRecord?.groups.includes(CHIEF_ADMIN_ROLE)
+  ) {
+    throw new AdminError(403, 'chief_admin_required', '관리자 계정 발급은 최고 관리자만 할 수 있습니다.');
+  }
+}
+
+export function assertAdminMayResetPassword(database, actor, target) {
+  const targetRecord = database.users[target];
+  if (!targetRecord) throw new AdminError(404, 'user_not_found', '사용자를 찾을 수 없습니다.');
+  const actorRecord = database.users[actor.username];
+  if (
+    targetRecord.groups.includes(ADMIN_ROLE)
+    && !actorRecord?.groups.includes(CHIEF_ADMIN_ROLE)
+  ) {
+    throw new AdminError(403, 'chief_admin_required', '관리자 비밀번호 초기화는 최고 관리자만 할 수 있습니다.');
   }
 }
 
 export function assertAuthorizedAdmin(database, actor) {
   const record = database.users[actor.username];
-  const actorRoles = normalizeRoles(actor.groups, {
+  const actorGroups = normalizeGroups(actor.groups, {
     status: 403,
     code: 'admin_required',
     message: '사용자 관리 권한이 없습니다.',
@@ -292,8 +512,8 @@ export function assertAuthorizedAdmin(database, actor) {
     record.disabled ||
     !record.groups.includes(ADMIN_ROLE) ||
     record.email !== actor.email ||
-    record.groups.length !== actorRoles.length ||
-    record.groups.some((role, index) => role !== actorRoles[index])
+    record.groups.length !== actorGroups.length ||
+    record.groups.some((group, index) => group !== actorGroups[index])
   ) {
     throw new AdminError(403, 'admin_required', '사용자 관리 권한이 없습니다.');
   }

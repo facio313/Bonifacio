@@ -14,16 +14,24 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
   ADMIN_ROLE,
+  APPLICATIONS,
+  CHIEF_ADMIN_ROLE,
+  ROLE_NAMES,
   AdminError,
   UserStore,
+  assertAdminMayCreate,
+  assertAdminMayResetPassword,
   assertAdminMutationAllowed,
   assertAuthorizedAdmin,
+  assignmentFromWireGroups,
   generateTemporaryCredential,
+  groupsForAssignment,
   hashPassword,
   normalizeDisplayName,
   normalizeEmail,
   normalizePassword,
-  normalizeRoles,
+  normalizeApplications,
+  normalizeRole,
   normalizeUsername,
   publicUsers,
   verifyPassword,
@@ -83,12 +91,12 @@ export function identity(request) {
     username = normalizeUsername(rawUsername);
     email = normalizeEmail(header(request, 'remote-email'));
     const rawGroups = header(request, 'remote-groups');
-    groups = normalizeRoles(rawGroups.split(','), {
+    groups = assignmentFromWireGroups(rawGroups.split(','), {
       status: 401,
       code: 'invalid_identity',
-      message: '중앙 로그인 역할을 확인할 수 없습니다.',
+      message: '중앙 로그인 역할과 앱 권한을 확인할 수 없습니다.',
     });
-    if (rawGroups !== groups.join(',')) throw invalidIdentity();
+    if (rawGroups !== groups.wireGroups.join(',')) throw invalidIdentity();
   } catch (error) {
     if (error instanceof AdminError && error.code === 'invalid_identity') throw error;
     throw invalidIdentity();
@@ -100,14 +108,18 @@ export function identity(request) {
   if (displayName.length > 120 || /[\u0000-\u001f\u007f]/.test(displayName)) {
     throw invalidIdentity();
   }
-  if (!groups.includes(ADMIN_ROLE)) {
+  if (!groups.groups.includes(ADMIN_ROLE)) {
     throw new AdminError(403, 'admin_required', '사용자 관리 권한이 없습니다.');
   }
   return {
     username,
     displayName,
     email,
-    groups,
+    groups: groups.groups,
+    role: groups.role,
+    applications: groups.role === CHIEF_ADMIN_ROLE
+      ? APPLICATIONS.map((application) => application.id)
+      : groups.applications,
   };
 }
 
@@ -257,12 +269,24 @@ async function serveStatic(response, filename) {
 async function handleApi(request, response, url, dependencies) {
   requireTrustedEdge(request, dependencies.edgeSecret);
   const actor = await authorizedIdentity(request, dependencies.store);
+  if (request.method === 'GET' && url.pathname === `${BASE}/api/editor-access`) {
+    sendJson(response, 200, { canEditContent: true, subject: actor.username });
+    return;
+  }
   if (request.method === 'GET' && url.pathname === `${BASE}/api/session`) {
     const csrfToken = randomBytes(32).toString('base64url');
     sendJson(
       response,
       200,
-      { actor, csrfToken },
+      {
+        actor,
+        csrfToken,
+        authorization: {
+          roles: ROLE_NAMES,
+          applications: APPLICATIONS,
+          chiefAdminRole: CHIEF_ADMIN_ROLE,
+        },
+      },
       {
         'Set-Cookie': `bonifacio_admin_csrf=${encodeURIComponent(csrfToken)}; Path=${BASE}/; Secure; HttpOnly; SameSite=Strict; Max-Age=3600`,
       },
@@ -315,11 +339,13 @@ async function handleApi(request, response, url, dependencies) {
   if (request.method === 'POST' && url.pathname === `${BASE}/api/users`) {
     const expectedRevision = requiredRevision(request);
     const body = await jsonBody(request);
-    requireExactBody(body, ['username', 'displayName', 'email', 'roles']);
+    requireExactBody(body, ['username', 'displayName', 'email', 'role', 'applications']);
     const username = normalizeUsername(body.username);
     const email = normalizeEmail(body.email);
     const displayName = normalizeDisplayName(body.displayName);
-    const roles = normalizeRoles(body.roles);
+    const role = normalizeRole(body.role);
+    const applications = normalizeApplications(body.applications, role);
+    const groups = groupsForAssignment(role, applications);
     let credential;
     await dependencies.store.mutate({
       actor: actor.username,
@@ -328,6 +354,7 @@ async function handleApi(request, response, url, dependencies) {
       expectedRevision,
       transform: async (database) => {
         assertAuthorizedAdmin(database, actor);
+        assertAdminMayCreate(database, actor, role);
         if (database.users[username]) throw new AdminError(409, 'username_exists', '이미 사용 중인 아이디입니다.');
         if (Object.values(database.users).some((user) => user.email === email)) {
           throw new AdminError(409, 'email_exists', '이미 사용 중인 이메일입니다.');
@@ -338,7 +365,7 @@ async function handleApi(request, response, url, dependencies) {
           displayname: displayName,
           password: credential.digest,
           email,
-          groups: roles,
+          groups,
         };
       },
     });
@@ -357,9 +384,11 @@ async function handleApi(request, response, url, dependencies) {
     const expectedRevision = requiredRevision(request);
     const username = userMatch[1];
     const body = await jsonBody(request);
-    requireExactBody(body, ['displayName', 'roles', 'disabled']);
+    requireExactBody(body, ['displayName', 'role', 'applications', 'disabled']);
     const displayName = normalizeDisplayName(body.displayName);
-    const roles = normalizeRoles(body.roles);
+    const role = normalizeRole(body.role);
+    const applications = normalizeApplications(body.applications, role);
+    const groups = groupsForAssignment(role, applications);
     const disabled = requireBoolean(body.disabled, '로그인 비활성화');
     await dependencies.store.mutate({
       actor: actor.username,
@@ -374,9 +403,9 @@ async function handleApi(request, response, url, dependencies) {
           ...current,
           displayname: displayName,
           disabled,
-          groups: roles,
+          groups,
         };
-        assertAdminMutationAllowed(database, actor.username, username, next);
+        assertAdminMutationAllowed(database, actor, username, next);
         database.users[username] = next;
       },
     });
@@ -402,8 +431,8 @@ async function handleApi(request, response, url, dependencies) {
       expectedRevision,
       transform: async (database) => {
         assertAuthorizedAdmin(database, actor);
+        assertAdminMayResetPassword(database, actor, username);
         const user = database.users[username];
-        if (!user) throw new AdminError(404, 'user_not_found', '사용자를 찾을 수 없습니다.');
         credential = await dependencies.generateCredential();
         user.password = credential.digest;
       },

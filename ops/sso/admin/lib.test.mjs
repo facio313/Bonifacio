@@ -7,12 +7,17 @@ import test from 'node:test';
 
 import {
   AdminError,
+  APPLICATIONS,
   ROLE_CONTRACT,
   UserStore,
+  assertAdminMayCreate,
+  assertAdminMayResetPassword,
   assertAdminMutationAllowed,
   assertAuthorizedAdmin,
+  assignmentFromWireGroups,
+  groupsForAssignment,
+  normalizeGroups,
   normalizePassword,
-  normalizeRoles,
   parseUserDatabase,
   publicUsers,
   serializeUserDatabase,
@@ -36,14 +41,14 @@ function database() {
         displayname: 'Owner',
         password: digest,
         email: 'owner@bonifacio.work',
-        groups: ['user', 'developer', 'admin'],
+        groups: ['user', 'admin', 'chief-admin', 'portfolio-v2'],
       },
       member: {
         disabled: false,
         displayname: 'Member',
         password: digest,
         email: 'member@example.com',
-        groups: ['user'],
+        groups: ['user', 'portfolio-v2', 'access-feelmyrythm'],
       },
     },
   };
@@ -95,36 +100,130 @@ test('database rejects duplicate YAML keys and unknown groups', () => {
   assert.throws(() => parseUserDatabase(unknownRoot), AdminError);
 });
 
-test('central roles are strict hierarchy-closed prefixes', () => {
-  assert.deepEqual(ROLE_CONTRACT.roles, ['user', 'developer', 'admin']);
-  assert.deepEqual(normalizeRoles(['user', 'developer', 'admin']), ['user', 'developer', 'admin']);
+test('v2 groups require a role prefix, marker, and catalog-ordered application grants', () => {
+  assert.deepEqual(ROLE_CONTRACT.roles, ['user', 'admin', 'chief-admin']);
+  assert.deepEqual(
+    groupsForAssignment('admin', ['monitor', 'feelmyrythm']),
+    ['user', 'admin', 'portfolio-v2', 'access-monitor', 'access-feelmyrythm'],
+  );
+  assert.deepEqual(
+    groupsForAssignment('chief-admin', []),
+    ['user', 'admin', 'chief-admin', 'portfolio-v2'],
+  );
   for (const value of [
     [],
-    ['developer'],
-    ['admin', 'user', 'developer'],
-    ['developer', 'user'],
+    ['user'],
+    ['admin', 'portfolio-v2'],
     ['user', 'admin'],
+    ['user', 'portfolio-v2', 'access-monitor', 'access-react'],
+    ['user', 'portfolio-v2', 'access-api'],
+    ['user', 'portfolio-v2', 'portfolio-v2'],
     ['user', 'user'],
     ['user', 'owners'],
     ['user', ''],
   ]) {
     assert.throws(
-      () => normalizeRoles(value),
-      (error) => error instanceof AdminError && error.code === 'invalid_roles',
+      () => normalizeGroups(value),
+      (error) => error instanceof AdminError && error.code === 'invalid_groups',
     );
   }
 });
 
-test('last admin and current administrator cannot lock themselves out', () => {
+test('legacy wire groups are expanded narrowly without exposing developer as a v2 role', () => {
+  assert.deepEqual(
+    assignmentFromWireGroups(['user']).groups,
+    groupsForAssignment('user', APPLICATIONS.map(({ id }) => id).filter((id) => id !== 'monitor')),
+  );
+  assert.deepEqual(
+    assignmentFromWireGroups(['user', 'developer']).groups,
+    groupsForAssignment('user', APPLICATIONS.map(({ id }) => id)),
+  );
+  assert.deepEqual(
+    assignmentFromWireGroups(['user', 'developer', 'admin']).groups,
+    groupsForAssignment('chief-admin', []),
+  );
+  for (const value of [
+    ['developer'],
+    ['user', 'admin'],
+    ['user', 'developer', 'portfolio-v2'],
+    ['user', 'developer', 'developer'],
+    ['admin', 'developer', 'user'],
+  ]) assert.throws(() => assignmentFromWireGroups(value), AdminError);
+});
+
+test('legacy database records read through expand compatibility and serialize only v2', () => {
+  const canonical = serializeUserDatabase(database());
+  const legacy = canonical
+    .replace(
+      '    groups:\n      - user\n      - portfolio-v2\n      - access-feelmyrythm\n',
+      '    groups:\n      - user\n',
+    )
+    .replace(
+      '    groups:\n      - user\n      - admin\n      - chief-admin\n      - portfolio-v2\n',
+      '    groups:\n      - user\n      - developer\n      - admin\n',
+    );
+  const expanded = parseUserDatabase(legacy);
+  assert.deepEqual(
+    expanded.users.owner.groups,
+    ['user', 'admin', 'chief-admin', 'portfolio-v2'],
+  );
+  assert.equal(expanded.users.member.groups.includes('access-monitor'), false);
+  const rewritten = serializeUserDatabase(expanded);
+  assert.equal(rewritten.includes('developer'), false);
+  assert.equal(rewritten.includes('portfolio-v2'), true);
+});
+
+test('last chief and current administrator cannot change protected self assignments', () => {
   const value = database();
   const disabledAdmin = { ...value.users.owner, disabled: true };
   assert.throws(
-    () => assertAdminMutationAllowed(value, 'owner', 'owner', disabledAdmin),
-    (error) => error instanceof AdminError && error.code === 'self_lockout',
+    () => assertAdminMutationAllowed(value, { username: 'owner' }, 'owner', disabledAdmin),
+    (error) => error instanceof AdminError && error.code === 'self_assignment_forbidden',
+  );
+  value.users.backup = {
+    ...value.users.owner,
+    disabled: true,
+    email: 'backup@bonifacio.work',
+  };
+  assert.throws(
+    () => assertAdminMutationAllowed(value, { username: 'backup' }, 'owner', disabledAdmin),
+    (error) => error instanceof AdminError && error.code === 'last_chief_admin',
+  );
+});
+
+test('delegated admins can manage only non-admin accounts', () => {
+  const value = database();
+  value.users.delegate = {
+    disabled: false,
+    displayname: 'Delegate',
+    password: digest,
+    email: 'delegate@bonifacio.work',
+    groups: groupsForAssignment('admin', ['monitor']),
+  };
+  const actor = { username: 'delegate' };
+  const memberNext = {
+    ...value.users.member,
+    groups: groupsForAssignment('user', ['monitor', 'feelmyrythm']),
+  };
+  assert.doesNotThrow(() => assertAdminMutationAllowed(value, actor, 'member', memberNext));
+  assert.throws(
+    () => assertAdminMutationAllowed(value, actor, 'member', {
+      ...memberNext,
+      groups: groupsForAssignment('admin', ['monitor']),
+    }),
+    (error) => error instanceof AdminError && error.code === 'chief_admin_required',
   );
   assert.throws(
-    () => assertAdminMutationAllowed(value, 'another-admin', 'owner', disabledAdmin),
-    (error) => error instanceof AdminError && error.code === 'last_admin',
+    () => assertAdminMutationAllowed(value, actor, 'delegate', value.users.delegate),
+    (error) => error instanceof AdminError && error.code === 'chief_admin_required',
+  );
+  assert.throws(
+    () => assertAdminMayCreate(value, actor, 'admin'),
+    (error) => error instanceof AdminError && error.code === 'chief_admin_required',
+  );
+  assert.throws(
+    () => assertAdminMayResetPassword(value, actor, 'owner'),
+    (error) => error instanceof AdminError && error.code === 'chief_admin_required',
   );
 });
 
@@ -134,15 +233,15 @@ test('current administrator is revalidated against the locked database snapshot'
     assertAuthorizedAdmin(value, {
       username: 'owner',
       email: 'owner@bonifacio.work',
-      groups: ['user', 'developer', 'admin'],
+      groups: ['user', 'admin', 'chief-admin', 'portfolio-v2'],
     }),
   );
-  value.users.owner.groups = ['user', 'developer'];
+  value.users.owner.groups = ['user', 'admin', 'portfolio-v2'];
   assert.throws(
     () => assertAuthorizedAdmin(value, {
       username: 'owner',
       email: 'owner@bonifacio.work',
-      groups: ['user', 'developer', 'admin'],
+      groups: ['user', 'admin', 'chief-admin', 'portfolio-v2'],
     }),
     (error) => error instanceof AdminError && error.code === 'admin_required',
   );
@@ -164,17 +263,17 @@ test('identity requires exact canonical admin roles and mutations require origin
     () => identity({ headers: {
       'remote-user': 'owner',
       'remote-email': 'owner@bonifacio.work',
-      'remote-groups': 'user,developer',
+      'remote-groups': 'user,portfolio-v2',
     } }),
     (error) => error instanceof AdminError && error.status === 403,
   );
   for (const groups of [
-    'user,developer,admin,admin',
-    'user,unknown,admin',
-    'user,,developer,admin',
-    'user, developer,admin',
-    'user,developer,admin ',
-    'admin,developer,user',
+    'user,admin,chief-admin,portfolio-v2,chief-admin',
+    'user,admin,portfolio-v2,unknown',
+    'user,,admin,portfolio-v2',
+    'user, admin,portfolio-v2',
+    'user,admin,portfolio-v2 ',
+    'admin,user,portfolio-v2',
   ]) {
     assert.throws(
       () => identity({ headers: {
@@ -189,14 +288,20 @@ test('identity requires exact canonical admin roles and mutations require origin
     headers: {
       'remote-user': 'owner',
       'remote-email': 'owner@bonifacio.work',
-      'remote-groups': 'user,developer,admin',
+      'remote-groups': 'user,admin,chief-admin,portfolio-v2',
       origin: 'https://bonifacio.work',
       cookie: 'bonifacio_admin_csrf=known-token',
       'x-csrf-token': 'known-token',
     },
   };
   assert.equal(identity(request).username, 'owner');
-  assert.deepEqual(identity(request).groups, ['user', 'developer', 'admin']);
+  assert.deepEqual(identity(request).groups, ['user', 'admin', 'chief-admin', 'portfolio-v2']);
+  assert.equal(identity(request).role, 'chief-admin');
+  assert.equal(identity({ headers: {
+    'remote-user': 'owner',
+    'remote-email': 'owner@bonifacio.work',
+    'remote-groups': 'user,developer,admin',
+  } }).role, 'chief-admin');
   assert.doesNotThrow(() => requireMutationProtection(request));
   assert.throws(
     () => requireMutationProtection({ ...request, headers: { ...request.headers, origin: 'https://evil.invalid' } }),
@@ -277,7 +382,7 @@ test('admin API creates and lists a redacted account through all authentication 
     const identityHeaders = {
       'Remote-User': 'owner',
       'Remote-Email': 'owner@bonifacio.work',
-      'Remote-Groups': 'user,developer,admin',
+      'Remote-Groups': 'user,admin,chief-admin,portfolio-v2',
       'X-Portfolio-Edge-Secret': edgeSecret,
     };
     const sessionResponse = await fetch(`${base}/session`, { headers: identityHeaders });
@@ -285,6 +390,21 @@ test('admin API creates and lists a redacted account through all authentication 
     const session = await sessionResponse.json();
     const cookie = sessionResponse.headers.get('set-cookie')?.split(';', 1)[0];
     assert.ok(cookie);
+    const editorAccessResponse = await fetch(`${base}/editor-access`, { headers: identityHeaders });
+    assert.equal(editorAccessResponse.status, 200);
+    assert.deepEqual(await editorAccessResponse.json(), {
+      canEditContent: true,
+      subject: 'owner',
+    });
+    const memberEditorAccessResponse = await fetch(`${base}/editor-access`, {
+      headers: {
+        ...identityHeaders,
+        'Remote-User': 'member',
+        'Remote-Email': 'member@example.com',
+        'Remote-Groups': 'user,portfolio-v2,access-feelmyrythm',
+      },
+    });
+    assert.equal(memberEditorAccessResponse.status, 403);
 
     const initialListResponse = await fetch(`${base}/users`, { headers: identityHeaders });
     assert.equal(initialListResponse.status, 200);
@@ -305,13 +425,15 @@ test('admin API creates and lists a redacted account through all authentication 
         username: 'new-member',
         displayName: 'New Member',
         email: 'new-member@example.com',
-        roles: ['user', 'developer'],
+        role: 'user',
+        applications: ['feelmyrythm', 'garak'],
       }),
     });
     assert.equal(createResponse.status, 201);
     const created = await createResponse.json();
     assert.equal(created.temporaryPassword, temporaryPassword);
-    assert.deepEqual(created.user.groups, ['user', 'developer']);
+    assert.equal(created.user.role, 'user');
+    assert.deepEqual(created.user.applications, ['feelmyrythm', 'garak']);
     assert.match(created.revision, /^[a-f0-9]{64}$/);
     assert.equal(JSON.stringify(created).includes(digest), false);
 
@@ -334,13 +456,15 @@ test('admin API creates and lists a redacted account through all authentication 
       },
       body: JSON.stringify({
         displayName: 'New Member',
-        roles: ['user', 'developer', 'admin'],
+        role: 'admin',
+        applications: ['monitor'],
         disabled: false,
       }),
     });
     assert.equal(promoteResponse.status, 200);
     const promoted = await promoteResponse.json();
-    assert.deepEqual(promoted.user.groups, ['user', 'developer', 'admin']);
+    assert.equal(promoted.user.role, 'admin');
+    assert.deepEqual(promoted.user.applications, ['monitor']);
     assert.match(promoted.revision, /^[a-f0-9]{64}$/);
 
     const wrongCurrentResponse = await fetch(`${base}/account/password`, {
@@ -398,11 +522,16 @@ test('admin API creates and lists a redacted account through all authentication 
         'X-CSRF-Token': session.csrfToken,
         'If-Match': created.revision,
       },
-      body: JSON.stringify({ displayName: 'Member', roles: ['user'], disabled: 'false' }),
+      body: JSON.stringify({
+        displayName: 'Member',
+        role: 'user',
+        applications: ['feelmyrythm'],
+        disabled: 'false',
+      }),
     });
     assert.equal(invalidDisabledResponse.status, 400);
 
-    const invalidRolesResponse = await fetch(`${base}/users/member`, {
+    const invalidApplicationsResponse = await fetch(`${base}/users/member`, {
       method: 'PATCH',
       headers: {
         ...identityHeaders,
@@ -414,11 +543,12 @@ test('admin API creates and lists a redacted account through all authentication 
       },
       body: JSON.stringify({
         displayName: 'Member',
-        roles: ['user', 'admin'],
+        role: 'user',
+        applications: ['garak', 'monitor'],
         disabled: false,
       }),
     });
-    assert.equal(invalidRolesResponse.status, 400);
+    assert.equal(invalidApplicationsResponse.status, 400);
 
     const staleResponse = await fetch(`${base}/users/member`, {
       method: 'PATCH',
@@ -430,7 +560,12 @@ test('admin API creates and lists a redacted account through all authentication 
         'X-CSRF-Token': session.csrfToken,
         'If-Match': initialList.revision,
       },
-      body: JSON.stringify({ displayName: 'Stale edit', roles: ['user'], disabled: false }),
+      body: JSON.stringify({
+        displayName: 'Stale edit',
+        role: 'user',
+        applications: ['feelmyrythm'],
+        disabled: false,
+      }),
     });
     assert.equal(staleResponse.status, 409);
 
@@ -456,7 +591,7 @@ test('admin mutation rechecks central admin state before spawning a password has
     },
     async mutate({ transform }) {
       const locked = database();
-      locked.users.owner.groups = ['user', 'developer'];
+      locked.users.owner.groups = ['user', 'portfolio-v2'];
       await transform(locked);
     },
   };
@@ -479,7 +614,7 @@ test('admin mutation rechecks central admin state before spawning a password has
     const headers = {
       'Remote-User': 'owner',
       'Remote-Email': 'owner@bonifacio.work',
-      'Remote-Groups': 'user,developer,admin',
+      'Remote-Groups': 'user,admin,chief-admin,portfolio-v2',
       'X-Portfolio-Edge-Secret': edgeSecret,
     };
     const sessionResponse = await fetch(`${base}/session`, { headers });
@@ -499,7 +634,8 @@ test('admin mutation rechecks central admin state before spawning a password has
         username: 'blocked-user',
         displayName: 'Blocked User',
         email: 'blocked@example.com',
-        roles: ['user'],
+        role: 'user',
+        applications: [],
       }),
     });
     assert.equal(response.status, 403);

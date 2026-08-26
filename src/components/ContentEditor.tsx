@@ -18,7 +18,7 @@ import type {
   ReactNode,
 } from 'react'
 
-const CONTENT_STORAGE_KEY = 'bonifacio.content.v1'
+const CONTENT_STORAGE_PREFIX = 'bonifacio.content.v1'
 
 type ContentOverrides = Record<string, string>
 
@@ -33,6 +33,7 @@ interface ActiveField {
 }
 
 interface ContentEditorContextValue {
+  editorAuthorized: boolean
   editMode: boolean
   overrides: ContentOverrides
   changedCount: number
@@ -65,17 +66,17 @@ const parseOverrides = (rawValue: string | null): ContentOverrides => {
   }
 }
 
-const persistOverrides = (overrides: ContentOverrides): boolean => {
+const persistOverrides = (storageKey: string, overrides: ContentOverrides): boolean => {
   if (typeof window === 'undefined') return false
   try {
-    window.localStorage.setItem(CONTENT_STORAGE_KEY, JSON.stringify(overrides))
+    window.localStorage.setItem(storageKey, JSON.stringify(overrides))
     return true
   } catch {
     return false
   }
 }
 
-const readInitialContent = (): {
+const readInitialContent = (storageKey: string): {
   overrides: ContentOverrides
   storageAvailable: boolean
 } => {
@@ -84,10 +85,10 @@ const readInitialContent = (): {
   }
 
   try {
-    const overrides = parseOverrides(window.localStorage.getItem(CONTENT_STORAGE_KEY))
+    const overrides = parseOverrides(window.localStorage.getItem(storageKey))
     return {
       overrides,
-      storageAvailable: persistOverrides(overrides),
+      storageAvailable: persistOverrides(storageKey, overrides),
     }
   } catch {
     return { overrides: emptyOverrides(), storageAvailable: false }
@@ -110,24 +111,69 @@ export interface ContentEditorProviderProps {
 }
 
 export function ContentEditorProvider({ children }: ContentEditorProviderProps) {
-  const initialContent = useMemo(readInitialContent, [])
-  const [overrides, setOverrides] = useState<ContentOverrides>(initialContent.overrides)
-  const [storageAvailable, setStorageAvailable] = useState(initialContent.storageAvailable)
+  const [editorAuthorized, setEditorAuthorized] = useState(false)
+  const [storageKey, setStorageKey] = useState<string | null>(null)
+  const [overrides, setOverrides] = useState<ContentOverrides>(emptyOverrides)
+  const [storageAvailable, setStorageAvailable] = useState(false)
   const [editMode, setEditMode] = useState(false)
   const [activeField, setActiveField] = useState<ActiveField | null>(null)
 
   useEffect(() => {
-    if (typeof window === 'undefined') return
+    if (typeof window === 'undefined') return undefined
+    const controller = new AbortController()
+
+    const authorize = async () => {
+      try {
+        const response = await window.fetch('/sso/admin/api/editor-access', {
+          cache: 'no-store',
+          credentials: 'same-origin',
+          headers: { Accept: 'application/json' },
+          signal: controller.signal,
+        })
+        if (!response.ok) throw new Error('content editor authorization failed')
+        const payload: unknown = await response.json()
+        if (
+          !payload
+          || typeof payload !== 'object'
+          || !('canEditContent' in payload)
+          || payload.canEditContent !== true
+          || !('subject' in payload)
+          || typeof payload.subject !== 'string'
+          || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(payload.subject)
+        ) throw new Error('content editor authorization denied')
+        const verifiedStorageKey = `${CONTENT_STORAGE_PREFIX}.${payload.subject}`
+        const initialContent = readInitialContent(verifiedStorageKey)
+        setOverrides(initialContent.overrides)
+        setStorageAvailable(initialContent.storageAvailable)
+        setStorageKey(verifiedStorageKey)
+        setEditorAuthorized(true)
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') return
+        setEditorAuthorized(false)
+        setEditMode(false)
+        setActiveField(null)
+        setOverrides(emptyOverrides())
+        setStorageAvailable(false)
+        setStorageKey(null)
+      }
+    }
+
+    void authorize()
+    return () => controller.abort()
+  }, [])
+
+  useEffect(() => {
+    if (!editorAuthorized || !storageKey || typeof window === 'undefined') return undefined
 
     const handleStorage = (event: StorageEvent) => {
-      if (event.key !== CONTENT_STORAGE_KEY) return
+      if (event.key !== storageKey) return
       setOverrides(parseOverrides(event.newValue))
       setStorageAvailable(true)
     }
 
     window.addEventListener('storage', handleStorage)
     return () => window.removeEventListener('storage', handleStorage)
-  }, [])
+  }, [editorAuthorized, storageKey])
 
   useEffect(() => {
     if (!editMode || typeof document === 'undefined') return
@@ -148,16 +194,19 @@ export function ContentEditorProvider({ children }: ContentEditorProviderProps) 
   }, [editMode])
 
   const toggleEditMode = useCallback(() => {
+    if (!editorAuthorized) return
     setActiveField(null)
     setEditMode((current) => !current)
-  }, [])
+  }, [editorAuthorized])
 
   const openEditor = useCallback((field: ActiveField) => {
+    if (!editorAuthorized) return
     setActiveField(field)
-  }, [])
+  }, [editorAuthorized])
 
   const saveValue = useCallback(
     (contentKey: string, defaultValue: string, nextValue: string) => {
+      if (!editorAuthorized || !storageKey) return false
       const currentlyOverridden = hasOverride(overrides, contentKey)
       let next = overrides
 
@@ -170,39 +219,42 @@ export function ContentEditorProvider({ children }: ContentEditorProviderProps) 
         next = Object.assign(emptyOverrides(), overrides, { [contentKey]: nextValue })
       }
 
-      const persisted = persistOverrides(next)
+      const persisted = persistOverrides(storageKey, next)
       setStorageAvailable(persisted)
       if (persisted) setOverrides(next)
       return persisted
     },
-    [overrides],
+    [editorAuthorized, overrides, storageKey],
   )
 
   const restoreValue = useCallback(
     (contentKey: string) => {
+      if (!editorAuthorized || !storageKey) return false
       if (!hasOverride(overrides, contentKey)) return true
       const next = Object.assign(emptyOverrides(), overrides)
       delete next[contentKey]
-      const persisted = persistOverrides(next)
+      const persisted = persistOverrides(storageKey, next)
       setStorageAvailable(persisted)
       if (persisted) setOverrides(next)
       return persisted
     },
-    [overrides],
+    [editorAuthorized, overrides, storageKey],
   )
 
   const resetAll = useCallback(() => {
+    if (!editorAuthorized || !storageKey) return
     const next = emptyOverrides()
-    const persisted = persistOverrides(next)
+    const persisted = persistOverrides(storageKey, next)
     setStorageAvailable(persisted)
     if (persisted) {
       setOverrides(next)
       setActiveField(null)
     }
-  }, [])
+  }, [editorAuthorized, storageKey])
 
   const contextValue = useMemo<ContentEditorContextValue>(
     () => ({
+      editorAuthorized,
       editMode,
       overrides,
       changedCount: Object.keys(overrides).length,
@@ -211,13 +263,13 @@ export function ContentEditorProvider({ children }: ContentEditorProviderProps) 
       openEditor,
       resetAll,
     }),
-    [editMode, openEditor, overrides, resetAll, storageAvailable, toggleEditMode],
+    [editorAuthorized, editMode, openEditor, overrides, resetAll, storageAvailable, toggleEditMode],
   )
 
   return (
     <ContentEditorContext.Provider value={contextValue}>
       {children}
-      {activeField ? (
+      {editorAuthorized && activeField ? (
         <ContentEditorDialog
           key={activeField.contentKey}
           field={activeField}
@@ -271,11 +323,14 @@ const toolbarButtonStyle: CSSProperties = {
 export function ContentEditorToolbar() {
   const {
     changedCount,
+    editorAuthorized,
     editMode,
     resetAll,
     storageAvailable,
     toggleEditMode,
   } = useContentEditor()
+
+  if (!editorAuthorized) return null
 
   const handleResetAll = () => {
     if (changedCount === 0 || typeof window === 'undefined') return

@@ -1,12 +1,26 @@
 {
-  "version": 1,
+  "version": 2,
   "header": "Remote-Groups",
   "separator": ",",
   "roles": [
     "user",
-    "developer",
-    "admin"
+    "admin",
+    "chief-admin"
   ],
   "administratorRole": "admin",
-  "hierarchy": "prefix"
+  "globalAdministratorRole": "chief-admin",
+  "hierarchy": "prefix",
+  "markerGroup": "portfolio-v2",
+  "applicationGroupPrefix": "access-",
+  "applications": [
+    { "id": "react", "group": "access-react", "label": "React" },
+    { "id": "vue", "group": "access-vue", "label": "Vue" },
+    { "id": "dukkeobi", "group": "access-dukkeobi", "label": "Dukkeobi" },
+    { "id": "ddit-finalproject", "group": "access-ddit-finalproject", "label": "DDIT Final Project" },
+    { "id": "monitor", "group": "access-monitor", "label": "Monitor" },
+    { "id": "pilgrimage", "group": "access-pilgrimage", "label": "Pilgrimage" },
+    { "id": "multtara", "group": "access-multtara", "label": "Multtara" },
+    { "id": "feelmyrythm", "group": "access-feelmyrythm", "label": "FeelMyRythm" },
+    { "id": "garak", "group": "access-garak", "label": "Garak" }
+  ]
 }
