@@ -43,6 +43,12 @@ npm ci
 npm run build
 ```
 
+## Browser text editor
+
+The landing page has a compact `텍스트 수정` control in the lower-right corner. Edit mode marks editable copy with a pencil, opens a focused save/cancel dialog, and keeps overrides in the current browser under the versioned `bonifacio.content.v1` local-storage key. Individual fields or all overrides can be restored to the source defaults.
+
+These overrides are intentionally browser-local drafts. They survive reloads and deployments on the same origin, but they are not a shared CMS and do not publish changes to other browsers or devices.
+
 On a feature branch, run the landing page directly with `npm run dev`. Use the
 contract-aware Compose wrapper for repository-local containers:
 

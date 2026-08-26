@@ -4,6 +4,7 @@ import type { MouseEvent } from 'react'
 import { Reveal, Arrow, LiveDot } from '../atoms'
 import { SectionRail } from '../Nav'
 import { CardVisual } from '../CardVisual'
+import { EditableLink, EditableText } from '../ContentEditor'
 import { apps } from '../../apps.config'
 import { BLOG_HREF } from '../../blog.config'
 import { ACCENT, BIO_LINE } from '../../site'
@@ -75,18 +76,35 @@ export const Profile = () => {
             letterSpacing: '-0.02em',
           }}
         >
-          최경수<span style={{ color: 'var(--accent)' }}>.</span>
+          <EditableText contentKey="profile.owner" label="이름" defaultValue="최경수" as="span" />
+          <span style={{ color: 'var(--accent)' }}>.</span>
         </span>
         <div className="intro-utility-actions">
           <span className="intro-availability">
-            <LiveDot /> Available for work · 2026
+            <LiveDot />{' '}
+            <EditableText
+              contentKey="profile.status"
+              label="업무 가능 상태"
+              defaultValue="Available for work · 2026"
+              as="span"
+            />
           </span>
-          <a className="monitor-link" href="/monitor/" aria-label="서버 모니터 열기">
-            Monitor <Arrow size={10} rotate={-45} />
-          </a>
-          <a className="monitor-link" href="/sso/admin/" aria-label="SSO 사용자 관리 열기">
-            SSO Admin <Arrow size={10} rotate={-45} />
-          </a>
+          <EditableLink className="monitor-link" href="/monitor/" aria-label="서버 모니터 열기">
+            <EditableText
+              contentKey="profile.utility.monitor"
+              label="Monitor 버튼"
+              defaultValue="Monitor"
+            />{' '}
+            <Arrow size={10} rotate={-45} />
+          </EditableLink>
+          <EditableLink className="monitor-link" href="/sso/admin/" aria-label="SSO 사용자 관리 열기">
+            <EditableText
+              contentKey="profile.utility.ssoAdmin"
+              label="SSO Admin 버튼"
+              defaultValue="SSO Admin"
+            />{' '}
+            <Arrow size={10} rotate={-45} />
+          </EditableLink>
         </div>
       </div>
 
@@ -115,7 +133,12 @@ export const Profile = () => {
               }}
             >
               <span style={{ width: 32, height: 1, background: 'var(--ink)', display: 'inline-block' }} />
-              Choi Kyungsoo · Web Developer
+              <EditableText
+                contentKey="profile.role"
+                label="이름과 역할"
+                defaultValue="Choi Kyungsoo · Web Developer"
+                as="span"
+              />
             </div>
           </Reveal>
 
@@ -134,10 +157,32 @@ export const Profile = () => {
                 wordBreak: 'keep-all',
               }}
             >
-              대용량 트래픽을 견디고<span style={{ color: 'var(--accent)' }}>,</span>
+              <EditableText
+                contentKey="profile.hero.line1"
+                label="메인 문구 첫째 줄"
+                defaultValue="대용량 트래픽을 견디고"
+                as="span"
+                render={(value) => (
+                  <>
+                    {value}<span style={{ color: 'var(--accent)' }}>,</span>
+                  </>
+                )}
+              />
               <br />
-              <span style={{ color: 'var(--accent)' }}>AI</span>가 흐르는 화면을 만듭니다
-              <span style={{ color: 'var(--accent)' }}>.</span>
+              <EditableText
+                contentKey="profile.hero.line2"
+                label="메인 문구 둘째 줄"
+                defaultValue="AI가 흐르는 화면을 만듭니다"
+                as="span"
+                render={(value) => (
+                  <>
+                    {value.startsWith('AI') ? (
+                      <><span style={{ color: 'var(--accent)' }}>AI</span>{value.slice(2)}</>
+                    ) : value}
+                    <span style={{ color: 'var(--accent)' }}>.</span>
+                  </>
+                )}
+              />
             </h1>
           </Reveal>
 
@@ -155,7 +200,13 @@ export const Profile = () => {
                 textWrap: 'pretty',
               }}
             >
-              {BIO_LINE}
+              <EditableText
+                contentKey="profile.bio"
+                label="소개 문장"
+                defaultValue={BIO_LINE}
+                as="span"
+                multiline
+              />
             </p>
           </Reveal>
 
@@ -164,9 +215,10 @@ export const Profile = () => {
               className="intro-cta"
               style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}
             >
-              <a
+              <EditableLink
                 href="#works"
                 onClick={scrollTo('works')}
+                className="intro-action"
                 style={{
                   display: 'inline-flex',
                   alignItems: 'center',
@@ -188,11 +240,18 @@ export const Profile = () => {
                   e.currentTarget.style.background = 'var(--ink)'
                 }}
               >
-                작업 보러가기 <Arrow />
-              </a>
-              <a
+                <EditableText
+                  contentKey="profile.cta.works"
+                  label="작업 보기 버튼"
+                  defaultValue="작업 보러가기"
+                  as="span"
+                />{' '}
+                <Arrow />
+              </EditableLink>
+              <EditableLink
                 href="#about"
                 onClick={scrollTo('about')}
+                className="intro-action"
                 style={{
                   display: 'inline-flex',
                   alignItems: 'center',
@@ -216,11 +275,16 @@ export const Profile = () => {
                   e.currentTarget.style.color = 'var(--ink)'
                 }}
               >
-                소개 읽기
-              </a>
-              <a
+                <EditableText
+                  contentKey="profile.cta.about"
+                  label="소개 읽기 버튼"
+                  defaultValue="소개 읽기"
+                  as="span"
+                />
+              </EditableLink>
+              <EditableLink
                 href={BLOG_HREF}
-                className="intro-blog-cta"
+                className="intro-action intro-blog-cta"
                 style={{
                   display: 'inline-flex',
                   alignItems: 'center',
@@ -237,8 +301,14 @@ export const Profile = () => {
                   transition: 'transform 0.3s, box-shadow 0.3s, background 0.3s',
                 }}
               >
-                블로그 <Arrow rotate={-45} />
-              </a>
+                <EditableText
+                  contentKey="profile.cta.blog"
+                  label="블로그 버튼"
+                  defaultValue="블로그"
+                  as="span"
+                />{' '}
+                <Arrow rotate={-45} />
+              </EditableLink>
             </div>
           </Reveal>
         </div>
@@ -268,9 +338,18 @@ export const Profile = () => {
           textTransform: 'uppercase',
         }}
       >
-        <span>Seoul, KR · cks@bonifacio.work</span>
+        <span>
+          <EditableText contentKey="profile.location" label="위치" defaultValue="Seoul, KR" as="span" />
+          {' · '}
+          <EditableText
+            contentKey="contact.email"
+            label="이메일"
+            defaultValue="cks@bonifacio.work"
+            as="span"
+          />
+        </span>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
-          Scroll
+          <EditableText contentKey="profile.scroll" label="스크롤 안내" defaultValue="Scroll" />
           <span style={{ display: 'inline-block', animation: 'float 2.4s ease-in-out infinite' }}>
             <Arrow rotate={90} />
           </span>
@@ -300,9 +379,14 @@ const MiniCardStrip = ({ accent }: { accent: string }) => {
           }}
         >
           <span style={{ width: 18, height: 1, background: 'var(--muted)' }} />
-          {String(list.length).padStart(2, '0')} works · preview
+          {String(list.length).padStart(2, '0')}{' '}
+          <EditableText
+            contentKey="profile.preview.label"
+            label="작업 미리보기 라벨"
+            defaultValue="works · preview"
+          />
         </div>
-        <a
+        <EditableLink
           href="#works"
           onClick={scrollTo('works')}
           style={{
@@ -317,9 +401,13 @@ const MiniCardStrip = ({ accent }: { accent: string }) => {
             gap: 6,
           }}
         >
-          View all
+          <EditableText
+            contentKey="profile.preview.viewAll"
+            label="작업 전체 보기 링크"
+            defaultValue="View all"
+          />
           <Arrow size={10} rotate={-45} />
-        </a>
+        </EditableLink>
       </div>
 
       <div
@@ -342,11 +430,12 @@ const MiniCardStrip = ({ accent }: { accent: string }) => {
         }}
       >
         {list.map((p, i) => (
-          <a
+          <EditableLink
             key={p.id}
             href="#works"
             onClick={scrollTo('works')}
             className="mini-card"
+            editingAs="div"
             style={{
               position: 'relative',
               display: 'flex',
@@ -405,10 +494,17 @@ const MiniCardStrip = ({ accent }: { accent: string }) => {
                   textOverflow: 'ellipsis',
                 }}
               >
-                {p.name}
+                {p.id === 'wgang' ? p.name : (
+                  <EditableText
+                    contentKey={`works.app.${p.id}.title`}
+                    label={`${p.name} 작업 제목`}
+                    defaultValue={p.name}
+                    as="span"
+                  />
+                )}
               </div>
             </div>
-          </a>
+          </EditableLink>
         ))}
       </div>
 

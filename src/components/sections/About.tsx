@@ -1,21 +1,25 @@
 /* 01 — ABOUT section: bio + career timeline + skills */
 import { Reveal } from '../atoms'
+import { EditableText } from '../ContentEditor'
 import { SectionRail, BigNumber } from '../Nav'
 
 const careerData = [
   {
+    id: 'senior-web-developer',
     year: '2023 — Now',
     role: 'Senior Web Developer',
     company: '차세대 금융 시스템 개발',
     desc: '은행 코어 시스템 차세대 프로젝트. 대용량 트랜잭션 처리 모듈 설계와 마이크로서비스 전환을 담당.',
   },
   {
+    id: 'web-developer',
     year: '2020 — 2023',
     role: 'Web Developer',
     company: '대용량 데이터 플랫폼',
     desc: '하루 수억 건 이벤트를 처리하는 데이터 파이프라인과 백오피스 운영 도구 개발·유지보수.',
   },
   {
+    id: 'junior-developer',
     year: '2018 — 2020',
     role: 'Junior Developer',
     company: 'SI · 고도화 프로젝트',
@@ -24,11 +28,13 @@ const careerData = [
 ]
 
 const skills = [
-  { group: 'Languages', items: ['Java', 'TypeScript', 'Python', 'SQL'] },
-  { group: 'Frameworks', items: ['Spring Boot', 'React', 'Next.js', 'Node.js'] },
-  { group: 'Data', items: ['Kafka', 'Redis', 'PostgreSQL', 'ClickHouse'] },
-  { group: 'Interests', items: ['LLM / RAG', 'Agent UX', 'Observability', 'Design systems'] },
+  { id: 'languages', group: 'Languages', items: ['Java', 'TypeScript', 'Python', 'SQL'] },
+  { id: 'frameworks', group: 'Frameworks', items: ['Spring Boot', 'React', 'Next.js', 'Node.js'] },
+  { id: 'data', group: 'Data', items: ['Kafka', 'Redis', 'PostgreSQL', 'ClickHouse'] },
+  { id: 'interests', group: 'Interests', items: ['LLM / RAG', 'Agent UX', 'Observability', 'Design systems'] },
 ]
+
+const contentId = (value: string) => encodeURIComponent(value.toLowerCase())
 
 export const About = () => {
   return (
@@ -37,10 +43,23 @@ export const About = () => {
 
       <BigNumber
         n="01"
-        kicker="About me"
+        kicker={
+          <EditableText
+            contentKey="about.kicker"
+            label="About 상단 라벨"
+            defaultValue="About me"
+            as="span"
+          />
+        }
         label={
           <>
-            지금까지의 궤적<span style={{ color: 'var(--accent)' }}>.</span>
+            <EditableText
+              contentKey="about.heading"
+              label="About 제목"
+              defaultValue="지금까지의 궤적"
+              as="span"
+            />
+            <span style={{ color: 'var(--accent)' }}>.</span>
           </>
         }
       />
@@ -62,7 +81,12 @@ export const About = () => {
                 marginBottom: 14,
               }}
             >
-              Statement
+              <EditableText
+                contentKey="about.statement.label"
+                label="소개문 라벨"
+                defaultValue="Statement"
+                as="span"
+              />
             </div>
             <p
               style={{
@@ -77,11 +101,32 @@ export const About = () => {
                 textWrap: 'pretty',
               }}
             >
-              은행·커머스 도메인에서 차세대 시스템 구축과
-              <span style={{ color: 'var(--accent)' }}> 대용량 트래픽 처리</span>, 오랜 기간 운영되는 서비스의
-              유지보수·고도화를 함께 해왔습니다.
+              <EditableText
+                contentKey="about.statement.primary"
+                label="소개문 첫 문단"
+                defaultValue="은행·커머스 도메인에서 차세대 시스템 구축과 대용량 트래픽 처리, 오랜 기간 운영되는 서비스의 유지보수·고도화를 함께 해왔습니다."
+                as="span"
+                multiline
+                render={(value) => {
+                  const emphasis = '대용량 트래픽 처리'
+                  const emphasisIndex = value.indexOf(emphasis)
+                  if (emphasisIndex < 0) return value
+                  return (
+                    <>
+                      {value.slice(0, emphasisIndex)}
+                      <span style={{ color: 'var(--accent)' }}>{emphasis}</span>
+                      {value.slice(emphasisIndex + emphasis.length)}
+                    </>
+                  )
+                }}
+              />
             </p>
-            <p
+            <EditableText
+              contentKey="about.statement.secondary"
+              label="소개문 두 번째 문단"
+              defaultValue="최근에는 AI를 제품에 자연스럽게 들이는 작업 — 에이전트 UX, RAG, 코드베이스 위에서 동작하는 도구들 — 에 관심을 두고 있습니다."
+              as="p"
+              multiline
               style={{
                 marginTop: 18,
                 marginBottom: 0,
@@ -92,10 +137,7 @@ export const About = () => {
                 wordBreak: 'keep-all',
                 textWrap: 'pretty',
               }}
-            >
-              최근에는 AI를 제품에 자연스럽게 들이는 작업 — 에이전트 UX, RAG, 코드베이스 위에서 동작하는 도구들 —
-              에 관심을 두고 있습니다.
-            </p>
+            />
           </div>
         </Reveal>
 
@@ -112,12 +154,17 @@ export const About = () => {
                 marginBottom: 14,
               }}
             >
-              Career · 2018 — Now
+              <EditableText
+                contentKey="about.career.label"
+                label="경력 타임라인 라벨"
+                defaultValue="Career · 2018 — Now"
+                as="span"
+              />
             </div>
             <ul style={{ listStyle: 'none', padding: 0, margin: 0, borderTop: '1px solid var(--line)' }}>
               {careerData.map((row, i) => (
                 <li
-                  key={i}
+                  key={row.id}
                   className="career-row"
                   style={{
                     display: 'grid',
@@ -138,7 +185,12 @@ export const About = () => {
                       paddingTop: 2,
                     }}
                   >
-                    {row.year}
+                    <EditableText
+                      contentKey={`about.career.${row.id}.year`}
+                      label={`경력 ${i + 1} 기간`}
+                      defaultValue={row.year}
+                      as="span"
+                    />
                   </div>
                   <div>
                     <div
@@ -151,7 +203,12 @@ export const About = () => {
                         marginBottom: 2,
                       }}
                     >
-                      {row.role}
+                      <EditableText
+                        contentKey={`about.career.${row.id}.role`}
+                        label={`경력 ${i + 1} 직무`}
+                        defaultValue={row.role}
+                        as="span"
+                      />
                     </div>
                     <div
                       style={{
@@ -162,7 +219,12 @@ export const About = () => {
                         fontWeight: 500,
                       }}
                     >
-                      {row.company}
+                      <EditableText
+                        contentKey={`about.career.${row.id}.company`}
+                        label={`경력 ${i + 1} 프로젝트`}
+                        defaultValue={row.company}
+                        as="span"
+                      />
                     </div>
                     <p
                       style={{
@@ -174,7 +236,13 @@ export const About = () => {
                         textWrap: 'pretty',
                       }}
                     >
-                      {row.desc}
+                      <EditableText
+                        contentKey={`about.career.${row.id}.description`}
+                        label={`경력 ${i + 1} 설명`}
+                        defaultValue={row.desc}
+                        as="span"
+                        multiline
+                      />
                     </p>
                   </div>
                 </li>
@@ -209,12 +277,22 @@ export const About = () => {
                   marginBottom: 10,
                 }}
               >
-                {g.group}
+                <EditableText
+                contentKey={`about.skills.${g.id}.group`}
+                  label={`기술 그룹 ${i + 1} 이름`}
+                  defaultValue={g.group}
+                  as="span"
+                />
               </div>
               <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                {g.items.map((s) => (
+                {g.items.map((s, itemIndex) => (
                   <li key={s} style={{ fontSize: 13.5, color: 'var(--ink)', letterSpacing: '-0.01em', fontWeight: 500 }}>
-                    {s}
+                    <EditableText
+                      contentKey={`about.skills.${g.id}.items.${contentId(s)}`}
+                      label={`기술 그룹 ${i + 1} 항목 ${itemIndex + 1}`}
+                      defaultValue={s}
+                      as="span"
+                    />
                   </li>
                 ))}
               </ul>

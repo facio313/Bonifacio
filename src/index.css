@@ -247,7 +247,7 @@ body {
   box-shadow: var(--shadow-2);
   transform: translateY(-2px);
 }
-.intro-cta a:focus-visible,
+.intro-cta .intro-action:focus-visible,
 .blog-all-link:focus-visible,
 .blog-post-row:focus-visible {
   outline: 2px solid var(--accent);
@@ -255,7 +255,11 @@ body {
 }
 
 /* Blog — a compact editorial index, ready for the Blog app's latest-post feed. */
-.blog-section { min-height: min(100vh, 900px); }
+.blog-section {
+  min-height: min(100vh, 900px);
+  max-height: none;
+  overflow: visible;
+}
 .blog-layout {
   display: grid;
   grid-template-columns: minmax(220px, 0.72fr) minmax(0, 1.7fr);
@@ -286,7 +290,7 @@ body {
   letter-spacing: 0.13em;
   text-transform: uppercase;
 }
-.blog-status > span {
+.blog-status > span[aria-hidden="true"] {
   width: 7px;
   height: 7px;
   border-radius: 50%;
@@ -329,7 +333,7 @@ body {
   line-height: 1;
   letter-spacing: -0.08em;
 }
-.blog-index-mark > strong span { color: var(--accent); }
+.blog-index-mark > strong > span:last-child { color: var(--accent); }
 .blog-index-mark > i { position: absolute; bottom: 15px; left: 18px; }
 .blog-list { grid-area: list; }
 .blog-post-reveal:last-child .blog-post-row { border-bottom: 1px solid var(--line-strong); }
@@ -429,6 +433,56 @@ body {
   transform: translateY(-2px);
 }
 
+/* In-page copy editor. The component keeps its essential geometry inline so
+   it remains usable even if the page theme changes; these rules provide the
+   theme-aware interaction and modal backdrop. */
+.content-editor-toolbar button,
+.content-editor-dialog button {
+  transition: transform 0.2s ease, background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.content-editor-toolbar button:not(:disabled):hover,
+.content-editor-dialog button:not(:disabled):hover { transform: translateY(-1px); }
+.content-editor-toolbar button:focus-visible,
+.content-editor-dialog button:focus-visible,
+.content-editor-dialog input:focus-visible,
+.content-editor-dialog textarea:focus-visible {
+  outline: 3px solid rgba(122, 59, 255, 0.32);
+  outline-offset: 2px;
+  border-color: var(--accent) !important;
+}
+.content-editor-editable--active {
+  border-radius: 3px;
+  transition: background 0.2s ease, box-shadow 0.2s ease;
+}
+.content-editor-editable--active:hover,
+.content-editor-editable--active:focus-visible {
+  background: rgba(255, 244, 194, 0.46);
+  box-shadow: 0 0 0 5px rgba(255, 244, 194, 0.24);
+}
+.content-editor-editable--modified {
+  outline-color: rgba(122, 59, 255, 0.82) !important;
+}
+.content-editor-editable--modified .content-editor-editable__marker {
+  background: var(--accent) !important;
+  color: #fff !important;
+}
+.content-editor-dialog { z-index: 10001; }
+.content-editor-dialog::backdrop {
+  background: rgba(11, 11, 13, 0.58);
+  backdrop-filter: blur(4px);
+}
+.content-editor-dialog--fallback {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 10001;
+  margin: 0;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 0 100vmax rgba(11, 11, 13, 0.58), 0 24px 90px rgba(0, 0, 0, 0.38) !important;
+}
+.content-editor-dialog input,
+.content-editor-dialog textarea { caret-color: var(--accent); }
+
 /* Smooth scroll & snap */
 html { scroll-behavior: smooth; }
 body.snap { scroll-snap-type: y proximity; }
@@ -476,7 +530,7 @@ body.snap { scroll-snap-type: y proximity; }
   .intro-main       { gap: 20px !important; }
   .dot-nav          { display: none !important; }
   .big-number       { margin-bottom: 40px !important; gap: 18px !important; }
-  .contact-grid a.cta { padding: 16px 22px !important; font-size: 16px !important; }
+  .contact-grid .cta { padding: 16px 22px !important; font-size: 16px !important; }
   .blog-layout {
     grid-template-columns: 1fr;
     grid-template-areas:
@@ -499,15 +553,24 @@ body.snap { scroll-snap-type: y proximity; }
 
 @media (max-width: 420px) {
   .intro-cta { gap: 8px !important; }
-  .intro-cta a { padding: 11px 12px !important; font-size: 13px !important; }
+  .intro-cta .intro-action { padding: 11px 12px !important; font-size: 13px !important; }
   .contact-footer { flex-direction: column; align-items: flex-start !important; gap: 8px !important; }
+  .content-editor-toolbar { right: 12px !important; bottom: 12px !important; }
+  .content-editor-toolbar--active { width: calc(100vw - 24px) !important; }
+  .content-editor-dialog__form { padding: 18px !important; }
+  .content-editor-dialog__actions { justify-content: stretch !important; }
+  .content-editor-dialog__actions button { flex: 1 1 auto; }
+  .content-editor-dialog__restore { margin-right: 0 !important; flex-basis: 100% !important; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .intro-blog-cta,
   .blog-all-link,
   .blog-post-row,
-  .blog-post-arrow { transition-duration: 0.01ms !important; }
+  .blog-post-arrow,
+  .content-editor-toolbar button,
+  .content-editor-dialog button,
+  .content-editor-editable--active { transition-duration: 0.01ms !important; }
 }
 
 /* Subtle grain overlay */
