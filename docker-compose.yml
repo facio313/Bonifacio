@@ -5,6 +5,9 @@ services:
     container_name: bonifacioSsoRedis
     init: true
     restart: unless-stopped
+    cpus: 0.75
+    cpu_shares: 512
+    mem_limit: 256m
     read_only: true
     command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
     tmpfs:
@@ -99,6 +102,9 @@ services:
         PORTFOLIO_AUTH_MODE: ${PORTFOLIO_AUTH_MODE:?run Compose through npm run compose}
     container_name: bonifacio
     restart: unless-stopped
+    cpus: 1.0
+    cpu_shares: 512
+    mem_limit: 256m
     ports:
       - "127.0.0.1:5173:80"
     healthcheck:
