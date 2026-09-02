@@ -3,6 +3,8 @@ import { stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { extname, join, normalize } from 'node:path';
 
+import { landingRedirect } from './landing-redirect.mjs';
+
 const root = '/app/dist';
 const port = Number.parseInt(process.env.PORT ?? '80', 10);
 const types = {
@@ -19,6 +21,22 @@ const types = {
 const server = createServer(async (request, response) => {
   try {
     const url = new URL(request.url ?? '/', 'http://localhost');
+    const redirect = landingRedirect(
+      request.method,
+      url.pathname,
+      request.headers['remote-groups'],
+    );
+    if (redirect) {
+      response.writeHead(302, {
+        'Cache-Control': 'no-store',
+        'Content-Length': '0',
+        Location: redirect,
+        'Referrer-Policy': 'same-origin',
+        'X-Content-Type-Options': 'nosniff',
+      });
+      response.end();
+      return;
+    }
     const clean = normalize(decodeURIComponent(url.pathname)).replace(/^([.][.][/\\])+/, '');
     let path = join(root, clean);
     if (!path.startsWith(`${root}/`) && path !== root) throw new Error('invalid path');
