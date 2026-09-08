@@ -32,6 +32,16 @@ export const apps: App[] = [
     icon: '✨',
   },
   {
+    id: 'pongdang',
+    title: 'Pongdang',
+    description: '새로운 서비스를 준비하는 프로젝트. 빈 페이지에서 시작합니다.',
+    href: '/pongdang/',
+    status: 'wip',
+    tags: ['React', 'FastAPI', 'PostgreSQL'],
+    color: '#168fa6',
+    icon: '💧',
+  },
+  {
     id: 'garak',
     title: 'Garak',
     description: '솔로부터 오케스트라까지 브라우저에서 작성·재생·내보내는 웹 악보 편집기.',
