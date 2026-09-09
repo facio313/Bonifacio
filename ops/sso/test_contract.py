@@ -9,6 +9,13 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class PortfolioSsoContractTests(unittest.TestCase):
+    def test_portal_streams_large_assets_without_disk_temp(self) -> None:
+        portal = (ROOT / "ops/sso/nginx/authelia-portal.conf").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("proxy_max_temp_file_size 0;", portal)
+        self.assertIn("proxy_pass http://127.0.0.1:9091;", portal)
+
     def test_compose_runs_authentication_and_administration_as_one_service(self) -> None:
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
         redis = compose.split("  bonifacioSsoRedis:\n", 1)[1].split(
