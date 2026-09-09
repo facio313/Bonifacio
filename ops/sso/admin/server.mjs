@@ -11,6 +11,8 @@ import {
 import { access, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { CatalogError, normalizeEntry, readCatalog, saveCatalogEntry } from './catalog.mjs';
+import { catalogAuthorize } from './catalog-auth.mjs';
 
 import {
   ADMIN_ROLE,
@@ -37,6 +39,7 @@ import {
   normalizeUsername,
   publicUser,
   publicUsers,
+  refreshApplications,
   verifyPassword,
 } from './lib.mjs';
 
@@ -559,6 +562,36 @@ async function handleUserApi(request, response, url, dependencies) {
 
   const authorized = await dependencies.store.readVersioned();
   assertAuthorizedUser(authorized.database, actor);
+  if (url.pathname === `${USER_BASE}/api/applications`) {
+    if (request.method === 'GET') {
+      const onlyApp = actor.role !== CHIEF_ADMIN_ROLE && actor.applications.length === 1
+        ? APPLICATIONS.find(({ id }) => id === actor.applications[0]) : null;
+      sendJson(response, 200, {
+        ...readCatalog(), canManage: actor.username === 'cks',
+        redirect: onlyApp ? onlyApp.href ?? `/${onlyApp.id}/` : null,
+      });
+      return;
+    }
+    if (request.method === 'POST') {
+      requireUserMutationProtection(request);
+      const revision = requiredRevision(request);
+      const body = await jsonBody(request);
+      requireExactBody(body, ['id', 'title', 'href', 'description']);
+      normalizeEntry(body);
+      const lock = await dependencies.store.acquireLock();
+      try {
+        assertAuthorizedUser(await dependencies.store.read(), actor);
+        if (actor.username !== 'cks') throw new AdminError(403, 'forbidden', 'cks 계정만 앱을 등록할 수 있습니다.');
+        await dependencies.store.appendAudit({ at: new Date().toISOString(), actor: actor.username, action: 'add_application', phase: 'prepared', target: body.id });
+        const result = await saveCatalogEntry(body, revision);
+        refreshApplications();
+        await dependencies.store.appendAudit({ at: new Date().toISOString(), actor: actor.username, action: 'add_application', phase: 'committed', target: body.id })
+          .catch(() => console.error('Catalog post-commit audit warning'));
+        sendJson(response, 201, { ...result, canManage: true });
+      } finally { await dependencies.store.releaseLock(lock); }
+      return;
+    }
+  }
   if (request.method === 'POST' && url.pathname === `${USER_BASE}/api/account/password`) {
     requireUserMutationProtection(request);
     const expectedRevision = requiredRevision(request);
@@ -666,6 +699,11 @@ export function createHandler({
     try {
       const url = new URL(request.url ?? '/', origin);
       const trustedEdgeSecret = edgeSecret ?? loadEdgeSecret();
+      if (url.pathname === '/internal/catalog/authz') {
+        requireTrustedEdge(request, trustedEdgeSecret);
+        await catalogAuthorize(request, response, { store, identity });
+        return;
+      }
       if (request.method === 'GET' && url.pathname === '/healthz') {
         await store.read();
         await access(process.env.SSO_AUTHELIA_BINARY ?? '/usr/local/bin/authelia', fileConstants.X_OK);
@@ -734,11 +772,12 @@ export function createHandler({
       }
       throw new AdminError(404, 'not_found', '페이지를 찾을 수 없습니다.');
     } catch (error) {
-      const status = error instanceof AdminError ? error.status : 500;
-      const code = error instanceof AdminError ? error.code : 'internal_error';
-      const message = error instanceof AdminError ? error.message : 'SSO 계정 서비스에서 오류가 발생했습니다.';
+      const expected = error instanceof AdminError || error instanceof CatalogError;
+      const status = expected ? error.status : 500;
+      const code = expected ? error.code : 'internal_error';
+      const message = expected ? error.message : 'SSO 계정 서비스에서 오류가 발생했습니다.';
       sendJson(response, status, { error: code, message });
-      if (!(error instanceof AdminError)) console.error(error);
+      if (!expected) console.error(error);
     }
   };
 }

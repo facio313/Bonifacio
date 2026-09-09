@@ -1,5 +1,15 @@
 # Bonifacio SSO operations
 
+## Application registration
+
+Sign in as `cks` and use **＋ 앱 추가** in the landing page's Works section. Supply a name, stable lowercase ID, URL, and optional description. An internal URL must be a distinct top-level path such as `/my-app/`; it may also be entered as `https://bonifacio.work/my-app/`. It appears immediately in the central account administrator's application checkboxes. Grant it to the intended accounts at `/sso/admin/`. Pongdang is initially registered at `/pongdang/`. External HTTPS URLs create links without claiming SSO protection over another host.
+
+Entries persist in `/data/applications/catalog.json` in the existing SSO data volume and survive image replacements. Account writes and catalog additions share a lock; catalog changes require its exact revision, active `cks` identity and user-surface CSRF token. Backups are retained next to the catalog. Entries are append-only so existing account grants cannot be orphaned or silently redirected. Public, infrastructure, baseline app, and excluded-service paths cannot be claimed.
+
+Install the updated `nginx/authelia-location.conf` as `/etc/nginx/snippets/bonifacio-sso-location.conf`. The internal subrequest now sends its private edge secret to the central catalog authorization broker on port 9092. Authelia on port 9091 still validates sessions and baseline ACLs. Registered paths use baseline authentication followed by exact database grant checks. Existing product assertions exclude runtime-added groups; account management keeps the complete assertion. This prevents each future app registration from requiring changes to every product's strict role parser. Legacy role migration remains frozen to the original catalog.
+
+A new application must already be deployed behind a private origin and an Nginx location using `bonifacio-sso-authrequest.conf`; registering its name/URL does not deploy an application. Install Pongdang's updated `ops/nginx-location.conf` as `/etc/nginx/snippets/pongdang-location.conf` to protect its existing location. For rollout, validate tests, replace both Bonifacio images, verify both SSO endpoints, then install the two snippets and validate/reload Nginx. Preserve Redis and the SSO data volume. Roll back both images and both snippets together if validation fails; never roll back to an older role parser after runtime grants have been issued without first reconciling the catalog and account database.
+
 Authelia 4.39.20 provides one shared login at `https://bonifacio.work/sso/`. Authentication and the Node account-administration API run as two supervised processes in one SSO container and one deployment unit. The production image copies Authelia from a pinned Linux ARM64 manifest digest. A dedicated Redis remains separate so sessions survive SSO container replacements, and the persistent SQLite volume retains Authelia state.
 
 ## Operator-only files

@@ -659,3 +659,15 @@ body::before {
   background: var(--accent);
   animation: pulseDot 1.6s ease-out infinite;
 }
+/* Server-persisted application catalog */
+.application-catalog { margin-bottom: 24px; }
+.application-add { padding: 10px 18px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--ink); font: inherit; cursor: pointer; }
+.application-dialog { width: min(480px, calc(100vw - 48px)); padding: 28px; border: 1px solid var(--line); border-radius: 18px; background: var(--surface); color: var(--ink); }
+.application-dialog::backdrop { background: #0007; }
+.application-dialog form, .application-dialog label { display: grid; gap: 10px; }
+.application-dialog form { gap: 18px; }
+.application-dialog h2, .application-dialog p { margin: 0; }
+.application-dialog p { font-size: 13px; line-height: 1.6; }
+.application-dialog input, .application-dialog textarea { width: 100%; box-sizing: border-box; padding: 10px; font: inherit; color: inherit; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+.application-dialog-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.application-dialog-actions button { padding: 10px 18px; font: inherit; cursor: pointer; }

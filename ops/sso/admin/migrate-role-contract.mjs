@@ -17,7 +17,7 @@ import { pathToFileURL } from 'node:url';
 import YAML from 'yaml';
 
 import {
-  APPLICATIONS,
+  ROLE_CONTRACT,
   UserStore,
   groupsForAssignment,
   parseUserDatabase,
@@ -29,7 +29,7 @@ const TARGET_EMAIL = 'cks@bonifacio.work';
 const LEGACY_USER_GROUPS = Object.freeze(['user']);
 const LEGACY_DEVELOPER_GROUPS = Object.freeze(['user', 'developer']);
 const LEGACY_ADMIN_GROUPS = Object.freeze(['user', 'developer', 'admin']);
-const ALL_APPLICATIONS = Object.freeze(APPLICATIONS.map((application) => application.id));
+const ALL_APPLICATIONS = Object.freeze(ROLE_CONTRACT.applications.map((application) => application.id));
 const USER_APPLICATIONS = Object.freeze(ALL_APPLICATIONS.filter((id) => id !== 'monitor'));
 const EXPECTED_FIELDS = Object.freeze(['disabled', 'displayname', 'email', 'groups', 'password']);
 

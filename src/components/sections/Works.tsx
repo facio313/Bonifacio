@@ -4,6 +4,7 @@ import { Reveal, Arrow, useReveal } from '../atoms'
 import { SectionRail, BigNumber } from '../Nav'
 import { CardVisual } from '../CardVisual'
 import { apps } from '../../apps.config'
+import { AddApplication, useApplicationCatalog } from '../ApplicationCatalog'
 import type { App, AppStatus } from '../../types/app'
 import { ACCENT } from '../../site'
 import { EditableText, useContentEditMode, useEditableValue } from '../ContentEditor'
@@ -40,7 +41,7 @@ const fromApp = (app: App, num: string): WorkCard => ({
 // Pilgrimage is the real app that headlines the grid as the hero card.
 const HERO_APP_ID = 'pilgrimage'
 
-const buildCards = (): WorkCard[] => {
+const buildCards = (apps: App[]): WorkCard[] => {
   const heroApp = apps.find((a) => a.id === HERO_APP_ID)
   const otherApps = apps.filter((a) => a.id !== HERO_APP_ID)
 
@@ -378,7 +379,8 @@ const ProjectCard = ({ card, accent }: { card: WorkCard; accent: string }) => {
 
 export const Works = () => {
   const accent = ACCENT
-  const cards = buildCards()
+  const { applications, catalog, setCatalog, error } = useApplicationCatalog(apps)
+  const cards = buildCards(applications)
 
   return (
     <section id="works" className="section section-tall" data-screen-label="02 Works">
@@ -461,6 +463,8 @@ export const Works = () => {
       </div>
 
       {/* Grid */}
+      {catalog && <AddApplication catalog={catalog} onSave={setCatalog} />}
+      {error && <p role="status">추가 앱 목록을 불러오지 못했습니다. 새로고침해 주세요.</p>}
       <div
         className="cards-grid"
         style={{

@@ -16,6 +16,7 @@ import {
 import { basename, dirname, join } from 'node:path';
 
 import YAML from 'yaml';
+import { catalogApplications } from './catalog.mjs';
 
 const USERNAME = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const GROUP = /^[a-z0-9][a-z0-9_-]{0,63}$/;
@@ -94,7 +95,7 @@ export const ROLE_NAMES = ROLE_CONTRACT.roles;
 export const ADMIN_ROLE = ROLE_CONTRACT.administratorRole;
 export const CHIEF_ADMIN_ROLE = ROLE_CONTRACT.globalAdministratorRole;
 export const CONTRACT_MARKER_GROUP = ROLE_CONTRACT.markerGroup;
-export const APPLICATIONS = ROLE_CONTRACT.applications;
+export const APPLICATIONS = [...ROLE_CONTRACT.applications, ...catalogApplications()];
 const ALLOWED_ROLES = new Set(ROLE_NAMES);
 const APPLICATION_BY_ID = new Map(
   APPLICATIONS.map((application) => [application.id, application]),
@@ -102,6 +103,15 @@ const APPLICATION_BY_ID = new Map(
 const APPLICATION_BY_GROUP = new Map(
   APPLICATIONS.map((application) => [application.group, application]),
 );
+export function refreshApplications() {
+  APPLICATIONS.splice(0, APPLICATIONS.length, ...ROLE_CONTRACT.applications, ...catalogApplications());
+  APPLICATION_BY_ID.clear();
+  APPLICATION_BY_GROUP.clear();
+  for (const application of APPLICATIONS) {
+    APPLICATION_BY_ID.set(application.id, application);
+    APPLICATION_BY_GROUP.set(application.group, application);
+  }
+}
 const LEGACY_ROLE_GROUPS = Object.freeze([
   Object.freeze(['user']),
   Object.freeze(['user', 'developer']),
@@ -225,6 +235,7 @@ export function normalizeApplications(
     message = '앱 접근 권한 구성이 올바르지 않습니다.',
   } = {},
 ) {
+  refreshApplications();
   const fail = () => {
     throw new AdminError(status, code, message);
   };
@@ -271,6 +282,7 @@ export function normalizeGroups(
     message = '중앙 역할 및 앱 접근 권한 구성이 올바르지 않습니다.',
   } = {},
 ) {
+  refreshApplications();
   const fail = () => {
     throw new AdminError(status, code, message);
   };
@@ -329,7 +341,7 @@ function legacyAssignment(value) {
     const groups = groupsForAssignment(CHIEF_ADMIN_ROLE, []);
     return { role: CHIEF_ADMIN_ROLE, applications: [], groups, wireGroups: [...value] };
   }
-  const applications = APPLICATIONS
+  const applications = ROLE_CONTRACT.applications
     .map((application) => application.id)
     .filter((id) => legacyIndex === 1 || id !== 'monitor');
   const groups = groupsForAssignment('user', applications);

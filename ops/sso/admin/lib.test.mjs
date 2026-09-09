@@ -171,11 +171,11 @@ test('v2 groups require a role prefix, marker, and catalog-ordered application g
 test('legacy wire groups are expanded narrowly without exposing developer as a v2 role', () => {
   assert.deepEqual(
     assignmentFromWireGroups(['user']).groups,
-    groupsForAssignment('user', APPLICATIONS.map(({ id }) => id).filter((id) => id !== 'monitor')),
+    groupsForAssignment('user', ROLE_CONTRACT.applications.map(({ id }) => id).filter((id) => id !== 'monitor')),
   );
   assert.deepEqual(
     assignmentFromWireGroups(['user', 'developer']).groups,
-    groupsForAssignment('user', APPLICATIONS.map(({ id }) => id)),
+    groupsForAssignment('user', ROLE_CONTRACT.applications.map(({ id }) => id)),
   );
   assert.deepEqual(
     assignmentFromWireGroups(['user', 'developer', 'admin']).groups,

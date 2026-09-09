@@ -34,9 +34,9 @@ export const apps: App[] = [
   {
     id: 'pongdang',
     title: 'Pongdang',
-    description: '새로운 서비스를 준비하는 프로젝트. 빈 페이지에서 시작합니다.',
+    description: 'Collector 문서와 수집 데이터를 조회합니다.',
     href: '/pongdang/',
-    status: 'wip',
+    status: 'live',
     tags: ['React', 'FastAPI', 'PostgreSQL'],
     color: '#168fa6',
     icon: '💧',
