@@ -261,6 +261,7 @@ class PortfolioSsoContractTests(unittest.TestCase):
         self.assertIn("disable_healthcheck: true", configuration)
         self.assertIn("password_reset:\n    disable: true", configuration)
         self.assertIn("min_length: 12", configuration)
+        self.assertIn("require_uppercase: false", configuration)
         self.assertIn("require_special: true", configuration)
         self.assertIn("/api/account/password", server)
         self.assertIn("currentPassword", server)

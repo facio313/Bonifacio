@@ -192,15 +192,14 @@ export function normalizePassword(value, field = '새 비밀번호', minimumLeng
 export function normalizeChosenPassword(value, field = '새 비밀번호') {
   const password = normalizePassword(value, field, CHOSEN_PASSWORD_MIN_LENGTH);
   if (
-    !/[A-Z]/.test(password)
-    || !/[a-z]/.test(password)
+    !/[a-z]/.test(password)
     || !/[0-9]/.test(password)
     || !/[\p{P}\p{S}]/u.test(password)
   ) {
     throw new AdminError(
       400,
       'invalid_password',
-      `${field}는 ${CHOSEN_PASSWORD_MIN_LENGTH}자 이상 ${PASSWORD_MAX_LENGTH}자 이하이며 영문 대문자, 소문자, 숫자, 특수문자를 각각 하나 이상 포함해야 합니다.`,
+      `${field}는 ${CHOSEN_PASSWORD_MIN_LENGTH}자 이상 ${PASSWORD_MAX_LENGTH}자 이하이며 영문 소문자, 숫자, 특수문자를 각각 하나 이상 포함해야 합니다.`,
     );
   }
   return password;

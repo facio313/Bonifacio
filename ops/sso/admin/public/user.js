@@ -153,12 +153,11 @@ passwordForm.addEventListener('submit', async (event) => {
   }
   if (
     Array.from(newPassword).length < 12
-    || !/[A-Z]/.test(newPassword)
     || !/[a-z]/.test(newPassword)
     || !/[0-9]/.test(newPassword)
     || !/[\p{P}\p{S}]/u.test(newPassword)
   ) {
-    showMessage('새 비밀번호는 12자 이상이며 영문 대문자·소문자, 숫자, 특수문자를 모두 포함해야 합니다.', 'error');
+    showMessage('새 비밀번호는 12자 이상이며 영문 소문자, 숫자, 특수문자를 모두 포함해야 합니다.', 'error');
     document.querySelector('#new-password').focus();
     return;
   }

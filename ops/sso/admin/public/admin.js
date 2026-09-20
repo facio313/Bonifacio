@@ -543,12 +543,11 @@ elements.passwordResetForm.addEventListener('submit', async (event) => {
     Array.from(newPassword).length < 12
     || Array.from(newPassword).length > 128
     || /[\u0000-\u001f\u007f]/.test(newPassword)
-    || !/[A-Z]/.test(newPassword)
     || !/[a-z]/.test(newPassword)
     || !/[0-9]/.test(newPassword)
     || !/[\p{P}\p{S}]/u.test(newPassword)
   ) {
-    elements.resetPasswordError.textContent = '새 비밀번호는 12자 이상 128자 이하이며 영문 대문자·소문자, 숫자, 특수문자를 모두 포함해야 합니다.';
+    elements.resetPasswordError.textContent = '새 비밀번호는 12자 이상 128자 이하이며 영문 소문자, 숫자, 특수문자를 모두 포함해야 합니다.';
     elements.resetPasswordError.hidden = false;
     elements.resetNewPassword.focus();
     return;

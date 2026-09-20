@@ -86,7 +86,7 @@ test('stored and current passwords retain compatibility while chosen passwords m
       (error) => error instanceof AdminError && error.code === 'invalid_password',
     );
   }
-  const minimum = `Aa1!${'x'.repeat(8)}`;
+  const minimum = 'newmember12!';
   assert.equal(Array.from(minimum).length, 12);
   assert.equal(normalizeChosenPassword(minimum), minimum);
   assert.equal(normalizeChosenPassword(`Aa1!${'🙂'.repeat(8)}`), `Aa1!${'🙂'.repeat(8)}`);
@@ -99,7 +99,7 @@ test('stored and current passwords retain compatibility while chosen passwords m
     'Short1!',
     `Aa1!${'x'.repeat(7)}`,
     `Aa1!${'🙂'.repeat(7)}`,
-    'lowercaseonly1!',
+    'lowercaseonly!',
     'UPPERCASEONLY1!',
     'NoNumberPassword!',
     'NoSpecialPass12',
@@ -654,7 +654,7 @@ test('admin password reset accepts a chosen password only after validation and a
   const directory = await mkdtemp(join(tmpdir(), 'bonifacio-chosen-password-'));
   const path = join(directory, 'users_database.yml');
   const edgeSecret = 'test-edge-secret-with-at-least-32-bytes';
-  const chosenPassword = 'NewMember12!';
+  const chosenPassword = 'newmember12!';
   const initial = database();
   initial.users.delegate = {
     disabled: false,
@@ -713,7 +713,7 @@ test('admin password reset accepts a chosen password only after validation and a
       [{ ...body, username: 'owner' }, 'invalid_input'],
       [{ newPassword: 'Aa1!xxxxxxx', confirmPassword: 'Aa1!xxxxxxx' }, 'invalid_password'],
       [{ newPassword: `Aa1!${'x'.repeat(125)}`, confirmPassword: `Aa1!${'x'.repeat(125)}` }, 'invalid_password'],
-      [{ newPassword: 'lowercaseonly12!', confirmPassword: 'lowercaseonly12!' }, 'invalid_password'],
+      [{ newPassword: 'lowercaseonly!', confirmPassword: 'lowercaseonly!' }, 'invalid_password'],
       [{ ...body, confirmPassword: 'OtherMember12!' }, 'password_confirmation_mismatch'],
     ]) {
       const response = await reset('member', values);
@@ -903,8 +903,8 @@ test('self-service API exposes one exact profile and changes only that account p
 
     const passwordBody = {
       currentPassword: 'current-member-password',
-      newPassword: 'NewMember12!',
-      confirmPassword: 'NewMember12!',
+      newPassword: 'newmember12!',
+      confirmPassword: 'newmember12!',
     };
     const crossCsrfResponse = await fetch(`${userApi}/account/password`, {
       method: 'POST',
