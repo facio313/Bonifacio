@@ -161,15 +161,42 @@
 
         <section class="danger-zone" aria-labelledby="credential-reset-title">
           <div>
-            <h3 id="credential-reset-title">임시 비밀번호 재발급</h3>
-            <p>기존 비밀번호를 즉시 무효화합니다. 사용자에게 안전한 채널로 전달하세요.</p>
+            <h3 id="credential-reset-title">비밀번호 변경</h3>
+            <p>원하는 새 비밀번호를 직접 지정합니다. 사용자에게 안전한 채널로 전달하세요.</p>
           </div>
-          <button id="reset-password" class="danger-button" type="button">재발급</button>
+          <button id="reset-password" class="danger-button" type="button">비밀번호 변경</button>
         </section>
 
         <footer class="dialog-actions sticky-actions">
           <button class="quiet-button" type="button" data-close-dialog>취소</button>
           <button id="save-user" type="submit">변경 저장</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog id="password-reset-dialog" aria-labelledby="password-reset-title" aria-describedby="password-reset-description">
+      <form id="password-reset-form" class="dialog-card">
+        <header class="dialog-heading">
+          <div>
+            <p class="section-label">CHANGE PASSWORD</p>
+            <h2 id="password-reset-title">비밀번호 변경</h2>
+            <p id="password-reset-description"></p>
+          </div>
+          <button class="icon-button" type="button" data-close-dialog aria-label="비밀번호 변경 닫기">×</button>
+        </header>
+        <div class="identity-grid">
+          <label class="wide-field" for="reset-new-password">새 비밀번호
+            <input id="reset-new-password" name="newPassword" type="password" minlength="12" maxlength="128" autocomplete="new-password" aria-describedby="reset-password-hint" required autofocus />
+          </label>
+          <label class="wide-field" for="reset-confirm-password">새 비밀번호 확인
+            <input id="reset-confirm-password" name="confirmPassword" type="password" minlength="12" maxlength="128" autocomplete="new-password" required />
+          </label>
+        </div>
+        <p id="reset-password-hint" class="credential-note">12자 이상 128자 이하이며 영문 대문자·소문자, 숫자, 특수문자를 각각 하나 이상 포함하세요.</p>
+        <p id="reset-password-error" class="lock-note" role="alert" hidden></p>
+        <footer class="dialog-actions">
+          <button class="quiet-button" type="button" data-close-dialog>취소</button>
+          <button id="password-reset-submit" class="danger-button" type="submit">비밀번호 변경</button>
         </footer>
       </form>
     </dialog>

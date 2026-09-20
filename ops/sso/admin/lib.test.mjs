@@ -86,9 +86,10 @@ test('stored and current passwords retain compatibility while chosen passwords m
       (error) => error instanceof AdminError && error.code === 'invalid_password',
     );
   }
-  const minimum = `Aa1!${'x'.repeat(10)}`;
-  assert.equal(Array.from(minimum).length, 14);
+  const minimum = `Aa1!${'x'.repeat(8)}`;
+  assert.equal(Array.from(minimum).length, 12);
   assert.equal(normalizeChosenPassword(minimum), minimum);
+  assert.equal(normalizeChosenPassword(`Aa1!${'🙂'.repeat(8)}`), `Aa1!${'🙂'.repeat(8)}`);
   assert.equal(normalizeChosenPassword('StrongPassword1!'), 'StrongPassword1!');
   assert.equal(normalizeChosenPassword('StrongPassword1★'), 'StrongPassword1★');
   const maximum = `Aa1!${'x'.repeat(124)}`;
@@ -96,7 +97,8 @@ test('stored and current passwords retain compatibility while chosen passwords m
   assert.equal(normalizeChosenPassword(maximum), maximum);
   for (const value of [
     'Short1!',
-    `Aa1!${'x'.repeat(9)}`,
+    `Aa1!${'x'.repeat(7)}`,
+    `Aa1!${'🙂'.repeat(7)}`,
     'lowercaseonly1!',
     'UPPERCASEONLY1!',
     'NoNumberPassword!',
@@ -263,6 +265,16 @@ test('delegated admins can manage only non-admin accounts', () => {
   assert.throws(
     () => assertAdminMayResetPassword(value, actor, 'owner'),
     (error) => error instanceof AdminError && error.code === 'chief_admin_required',
+  );
+  assert.throws(
+    () => assertAdminMayResetPassword(value, actor, 'member'),
+    (error) => error instanceof AdminError && error.code === 'chief_admin_required',
+  );
+  assert.doesNotThrow(() => assertAdminMayResetPassword(value, { username: 'owner' }, 'member'));
+  assert.doesNotThrow(() => assertAdminMayResetPassword(value, { username: 'owner' }, 'delegate'));
+  assert.throws(
+    () => assertAdminMayResetPassword(value, { username: 'owner' }, 'owner'),
+    (error) => error instanceof AdminError && error.code === 'self_password_reset_forbidden',
   );
 });
 
@@ -638,6 +650,146 @@ test('admin API creates and lists a redacted account through all authentication 
   }
 });
 
+test('admin password reset accepts a chosen password only after validation and authorization', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'bonifacio-chosen-password-'));
+  const path = join(directory, 'users_database.yml');
+  const edgeSecret = 'test-edge-secret-with-at-least-32-bytes';
+  const chosenPassword = 'NewMember12!';
+  const initial = database();
+  initial.users.delegate = {
+    disabled: false,
+    displayname: 'Delegate',
+    password: digest,
+    email: 'delegate@example.com',
+    groups: ['user', 'admin', 'portfolio-v2', 'access-monitor'],
+  };
+  await writeFile(path, serializeUserDatabase(initial), { mode: 0o600 });
+  const store = new UserStore(path, { minimumWriteIntervalMs: 0 });
+  const hashed = [];
+  const server = createServer(createHandler({
+    store,
+    edgeSecret,
+    generateCredential: async () => assert.fail('A chosen password must not be replaced with a generated value'),
+    hashCredential: async (password) => {
+      hashed.push(password);
+      return changedDigest;
+    },
+  }));
+  try {
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', resolve);
+    });
+    const base = `http://127.0.0.1:${server.address().port}/sso/admin/api`;
+    const headersFor = (username) => ({
+      'Remote-User': username,
+      'Remote-Name': initial.users[username].displayname,
+      'Remote-Email': initial.users[username].email,
+      'Remote-Groups': initial.users[username].groups.join(','),
+      'X-Portfolio-Edge-Secret': edgeSecret,
+    });
+    const sessionResponse = await fetch(`${base}/session`, { headers: headersFor('owner') });
+    assert.equal(sessionResponse.status, 200);
+    const session = await sessionResponse.json();
+    const cookie = sessionResponse.headers.get('set-cookie')?.split(';', 1)[0];
+    const original = await store.readVersioned();
+    const body = { newPassword: chosenPassword, confirmPassword: chosenPassword };
+    const reset = (target, values = body, headers = {}) => fetch(`${base}/users/${target}/reset-password`, {
+      method: 'POST',
+      headers: {
+        ...headersFor('owner'),
+        'Content-Type': 'application/json',
+        Cookie: cookie,
+        Origin: 'https://bonifacio.work',
+        'X-CSRF-Token': session.csrfToken,
+        'If-Match': original.revision,
+        ...headers,
+      },
+      body: JSON.stringify(values),
+    });
+    for (const [values, expectedError] of [
+      [{}, 'invalid_input'],
+      [{ newPassword: chosenPassword }, 'invalid_input'],
+      [{ ...body, username: 'owner' }, 'invalid_input'],
+      [{ newPassword: 'Aa1!xxxxxxx', confirmPassword: 'Aa1!xxxxxxx' }, 'invalid_password'],
+      [{ newPassword: `Aa1!${'x'.repeat(125)}`, confirmPassword: `Aa1!${'x'.repeat(125)}` }, 'invalid_password'],
+      [{ newPassword: 'lowercaseonly12!', confirmPassword: 'lowercaseonly12!' }, 'invalid_password'],
+      [{ ...body, confirmPassword: 'OtherMember12!' }, 'password_confirmation_mismatch'],
+    ]) {
+      const response = await reset('member', values);
+      assert.equal(response.status, 400);
+      assert.equal((await response.json()).error, expectedError);
+    }
+    for (const [headers, status, expectedError] of [
+      [{ 'X-CSRF-Token': '' }, 403, 'invalid_csrf'],
+      [{ 'X-Portfolio-Edge-Secret': '' }, 401, 'untrusted_edge'],
+      [{ Origin: 'https://untrusted.invalid' }, 403, 'invalid_origin'],
+      [headersFor('member'), 403, 'admin_required'],
+      [headersFor('delegate'), 403, 'chief_admin_required'],
+    ]) {
+      const response = await reset('member', body, headers);
+      assert.equal(response.status, status);
+      assert.equal((await response.json()).error, expectedError);
+    }
+    const stale = await reset('member', body, { 'If-Match': '0'.repeat(64) });
+    assert.equal(stale.status, 409);
+    assert.equal((await stale.json()).error, 'stale_revision');
+    const privileged = await reset('owner', body, headersFor('delegate'));
+    assert.equal(privileged.status, 403);
+    assert.equal((await privileged.json()).error, 'chief_admin_required');
+    const selfReset = await reset('owner');
+    assert.equal(selfReset.status, 403);
+    assert.equal((await selfReset.json()).error, 'self_password_reset_forbidden');
+    const missing = await reset('missing');
+    assert.equal(missing.status, 404);
+    assert.equal((await missing.json()).error, 'user_not_found');
+    assert.deepEqual(hashed, []);
+    assert.equal((await store.readVersioned()).revision, original.revision);
+
+    assert.equal(Array.from(chosenPassword).length, 12);
+    const response = await reset('member');
+    assert.equal(response.status, 200);
+    const result = await response.json();
+    assert.deepEqual(Object.keys(result), ['revision']);
+    assert.notEqual(result.revision, original.revision);
+    assert.deepEqual(hashed, [chosenPassword]);
+    const stored = await store.read();
+    assert.equal(stored.users.member.password, changedDigest);
+    assert.deepEqual(stored.users.owner, initial.users.owner);
+    assert.deepEqual(stored.users.delegate, initial.users.delegate);
+    assert.deepEqual({ ...stored.users.member, password: digest }, initial.users.member);
+
+    const ownerSessionResponse = await fetch(`${base}/session`, { headers: headersFor('owner') });
+    assert.equal(ownerSessionResponse.status, 200);
+    const ownerSession = await ownerSessionResponse.json();
+    const privilegedReset = await reset('delegate', body, {
+      ...headersFor('owner'),
+      Cookie: ownerSessionResponse.headers.get('set-cookie')?.split(';', 1)[0],
+      'X-CSRF-Token': ownerSession.csrfToken,
+      'If-Match': result.revision,
+    });
+    assert.equal(privilegedReset.status, 200);
+    assert.deepEqual(Object.keys(await privilegedReset.json()), ['revision']);
+    assert.equal((await store.read()).users.delegate.password, changedDigest);
+    assert.deepEqual(hashed, [chosenPassword, chosenPassword]);
+
+    const audit = await readFile(store.auditPath, 'utf8');
+    assert.equal(audit.includes(chosenPassword), false);
+    assert.equal(audit.includes(digest), false);
+    assert.equal(audit.includes(changedDigest), false);
+    const events = audit.trim().split('\n').map((line) => JSON.parse(line));
+    assert.equal(events.length, 4);
+    assert.ok(events.every((event) => event.action === 'reset_password'));
+    assert.equal((await readFile(path, 'utf8')).includes(chosenPassword), false);
+    for (const name of await readdir(store.backupDirectory)) {
+      assert.equal((await readFile(join(store.backupDirectory, name), 'utf8')).includes(chosenPassword), false);
+    }
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('self-service API exposes one exact profile and changes only that account password', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'bonifacio-user-api-'));
   const currentDirectory = join(directory, 'current');
@@ -751,8 +903,8 @@ test('self-service API exposes one exact profile and changes only that account p
 
     const passwordBody = {
       currentPassword: 'current-member-password',
-      newPassword: 'ChosenMember12!',
-      confirmPassword: 'ChosenMember12!',
+      newPassword: 'NewMember12!',
+      confirmPassword: 'NewMember12!',
     };
     const crossCsrfResponse = await fetch(`${userApi}/account/password`, {
       method: 'POST',
@@ -892,8 +1044,8 @@ test('self-service API exposes one exact profile and changes only that account p
       '/sso/logout?rd=https%3A%2F%2Fbonifacio.work%2Fsso%2Fuser%2F',
     );
     assert.match(changed.revision, /^[a-f0-9]{64}$/);
-    assert.equal(JSON.stringify(changed).includes('ChosenMember12!'), false);
-    assert.deepEqual(hashed, ['ChosenMember12!']);
+    assert.equal(JSON.stringify(changed).includes(passwordBody.newPassword), false);
+    assert.deepEqual(hashed, [passwordBody.newPassword]);
     const stored = await new UserStore(path).read();
     assert.equal(stored.users.member.password, changedDigest);
     assert.equal(stored.users.owner.password, digest);
@@ -1308,9 +1460,10 @@ test('self-service reserves three successful changes per rolling day without cha
   }
 });
 
-test('admin mutation rechecks central admin state before spawning a password hash', async () => {
+test('admin mutations recheck central admin state before spawning a password hash', async () => {
   const edgeSecret = 'test-edge-secret-with-at-least-32-bytes';
   let generated = 0;
+  let hashed = 0;
   const store = {
     async read() {
       return database();
@@ -1330,6 +1483,10 @@ test('admin mutation rechecks central admin state before spawning a password has
     generateCredential: async () => {
       generated += 1;
       return { password: 'should-not-be-created', digest };
+    },
+    hashCredential: async () => {
+      hashed += 1;
+      return changedDigest;
     },
   }));
   try {
@@ -1370,6 +1527,21 @@ test('admin mutation rechecks central admin state before spawning a password has
     });
     assert.equal(response.status, 403);
     assert.equal(generated, 0);
+    const resetResponse = await fetch(`${base}/users/member/reset-password`, {
+      method: 'POST',
+      headers: {
+        ...headers,
+        'Content-Type': 'application/json',
+        Cookie: cookie,
+        Origin: 'https://bonifacio.work',
+        'X-CSRF-Token': session.csrfToken,
+        'If-Match': 'a'.repeat(64),
+      },
+      body: JSON.stringify({ newPassword: 'NewMember12!', confirmPassword: 'NewMember12!' }),
+    });
+    assert.equal(resetResponse.status, 403);
+    assert.equal((await resetResponse.json()).error, 'admin_required');
+    assert.equal(hashed, 0);
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }

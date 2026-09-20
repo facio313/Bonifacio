@@ -22,7 +22,7 @@ const USERNAME = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const GROUP = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const ARGON2ID = /^\$argon2id\$v=19\$m=\d+,t=\d+,p=\d+\$[A-Za-z0-9+/]+\$[A-Za-z0-9+/]+$/;
 const PASSWORD_MIN_LENGTH = 4;
-const CHOSEN_PASSWORD_MIN_LENGTH = 14;
+const CHOSEN_PASSWORD_MIN_LENGTH = 12;
 const PASSWORD_MAX_LENGTH = 128;
 const PASSWORD_PROMPT = 'Enter Password:';
 const HASH_PASSWORD_COMMAND = [
@@ -523,15 +523,14 @@ export function assertAdminMayCreate(database, actor, role) {
 }
 
 export function assertAdminMayResetPassword(database, actor, target) {
-  const targetRecord = database.users[target];
-  if (!targetRecord) throw new AdminError(404, 'user_not_found', '사용자를 찾을 수 없습니다.');
   const actorRecord = database.users[actor.username];
-  if (
-    targetRecord.groups.includes(ADMIN_ROLE)
-    && !actorRecord?.groups.includes(CHIEF_ADMIN_ROLE)
-  ) {
-    throw new AdminError(403, 'chief_admin_required', '관리자 비밀번호 초기화는 최고 관리자만 할 수 있습니다.');
+  if (!actorRecord?.groups.includes(CHIEF_ADMIN_ROLE)) {
+    throw new AdminError(403, 'chief_admin_required', '다른 사용자의 비밀번호는 최고 관리자만 변경할 수 있습니다.');
   }
+  if (actor.username === target) {
+    throw new AdminError(403, 'self_password_reset_forbidden', '본인 비밀번호는 내 정보 화면에서 현재 비밀번호를 확인한 뒤 변경하세요.');
+  }
+  if (!database.users[target]) throw new AdminError(404, 'user_not_found', '사용자를 찾을 수 없습니다.');
 }
 
 export function assertAuthorizedUser(

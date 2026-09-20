@@ -49,6 +49,13 @@ const elements = {
   editLockNote: document.querySelector('#edit-lock-note'),
   saveUser: document.querySelector('#save-user'),
   resetPassword: document.querySelector('#reset-password'),
+  passwordResetDialog: document.querySelector('#password-reset-dialog'),
+  passwordResetForm: document.querySelector('#password-reset-form'),
+  passwordResetDescription: document.querySelector('#password-reset-description'),
+  passwordResetSubmit: document.querySelector('#password-reset-submit'),
+  resetNewPassword: document.querySelector('#reset-new-password'),
+  resetConfirmPassword: document.querySelector('#reset-confirm-password'),
+  resetPasswordError: document.querySelector('#reset-password-error'),
   dangerZone: document.querySelector('.danger-zone'),
   credentialDialog: document.querySelector('#credential-dialog'),
   credentialUsername: document.querySelector('#credential-username'),
@@ -65,6 +72,7 @@ const elements = {
 let createAssignmentControls;
 let editAssignmentControls;
 let messageTimer;
+let passwordResetPending = false;
 const dialogTriggers = new WeakMap();
 
 function showMessage(text, tone = 'success') {
@@ -207,6 +215,7 @@ function openDialog(dialog, trigger) {
 }
 
 function closeDialog(dialog) {
+  if (dialog === elements.passwordResetDialog && passwordResetPending) return;
   if (dialog.open) dialog.close();
 }
 
@@ -356,13 +365,15 @@ function openUserEditor(username, trigger) {
   });
   elements.editAuthorization.append(editAssignmentControls.element);
   elements.saveUser.disabled = fullyLocked;
-  elements.dangerZone.hidden = actorIsSelf || fullyLocked;
-  elements.resetPassword.disabled = actorIsSelf || fullyLocked;
-  elements.editLockNote.hidden = !(actorIsSelf || fullyLocked);
+  elements.dangerZone.hidden = actorIsSelf || !isChiefAdmin();
+  elements.resetPassword.disabled = actorIsSelf || !isChiefAdmin();
+  elements.editLockNote.hidden = !(actorIsSelf || fullyLocked || !isChiefAdmin());
   if (actorIsSelf) {
     elements.editLockNote.textContent = '내 역할·서비스·상태는 여기서 바꿀 수 없습니다. 비밀번호는 내 정보 화면에서 변경하세요.';
   } else if (fullyLocked) {
     elements.editLockNote.textContent = '관리자 계정은 최고 관리자만 변경할 수 있습니다.';
+  } else if (!isChiefAdmin()) {
+    elements.editLockNote.textContent = '다른 사용자의 비밀번호는 최고 관리자만 변경할 수 있습니다.';
   }
   openDialog(elements.userDialog, trigger);
 }
@@ -496,30 +507,87 @@ elements.userForm.addEventListener('submit', async (event) => {
   }
 });
 
-elements.resetPassword.addEventListener('click', async () => {
+elements.resetPassword.addEventListener('click', () => {
   const user = state.users.find((candidate) => candidate.username === state.selectedUsername);
-  if (!user || !window.confirm(`${user.username} 계정의 기존 비밀번호를 무효화하고 임시 비밀번호를 발급할까요?`)) return;
-  elements.resetPassword.disabled = true;
+  if (!user || !isChiefAdmin() || user.username === state.actor.username) return;
+  elements.passwordResetForm.reset();
+  elements.resetPasswordError.hidden = true;
+  elements.passwordResetDescription.textContent = `${user.username} 계정의 새 비밀번호를 입력하세요. 변경하면 기존 비밀번호로 로그인할 수 없습니다.`;
+  openDialog(elements.passwordResetDialog, elements.resetPassword);
+});
+
+elements.passwordResetDialog.addEventListener('cancel', (event) => {
+  if (passwordResetPending) event.preventDefault();
+});
+
+elements.passwordResetDialog.addEventListener('close', () => {
+  elements.passwordResetForm.reset();
+  elements.resetPasswordError.textContent = '';
+  elements.resetPasswordError.hidden = true;
+});
+
+elements.passwordResetForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const user = state.users.find((candidate) => candidate.username === state.selectedUsername);
+  if (!user || !isChiefAdmin() || user.username === state.actor.username || passwordResetPending) return;
+  const newPassword = elements.resetNewPassword.value;
+  const confirmPassword = elements.resetConfirmPassword.value;
+  elements.resetPasswordError.hidden = true;
+  if (newPassword !== confirmPassword) {
+    elements.resetPasswordError.textContent = '새 비밀번호와 확인 입력이 일치하지 않습니다.';
+    elements.resetPasswordError.hidden = false;
+    elements.resetConfirmPassword.focus();
+    return;
+  }
+  if (
+    Array.from(newPassword).length < 12
+    || Array.from(newPassword).length > 128
+    || /[\u0000-\u001f\u007f]/.test(newPassword)
+    || !/[A-Z]/.test(newPassword)
+    || !/[a-z]/.test(newPassword)
+    || !/[0-9]/.test(newPassword)
+    || !/[\p{P}\p{S}]/u.test(newPassword)
+  ) {
+    elements.resetPasswordError.textContent = '새 비밀번호는 12자 이상 128자 이하이며 영문 대문자·소문자, 숫자, 특수문자를 모두 포함해야 합니다.';
+    elements.resetPasswordError.hidden = false;
+    elements.resetNewPassword.focus();
+    return;
+  }
+  passwordResetPending = true;
+  elements.passwordResetForm.setAttribute('aria-busy', 'true');
+  for (const control of elements.passwordResetForm.querySelectorAll('input, button')) control.disabled = true;
+  elements.passwordResetSubmit.textContent = '변경 중…';
   try {
     const payload = await request(`/users/${encodeURIComponent(user.username)}/reset-password`, {
       method: 'POST',
-      body: '{}',
+      body: JSON.stringify({ newPassword, confirmPassword }),
     });
+    state.revision = payload.revision;
+    passwordResetPending = false;
+    dialogTriggers.set(elements.passwordResetDialog, elements.refresh);
+    dialogTriggers.set(elements.userDialog, elements.refresh);
+    closeDialog(elements.passwordResetDialog);
     closeDialog(elements.userDialog);
-    showCredential(user.username, payload.temporaryPassword, elements.refresh);
-    showMessage(`${user.username} 계정의 임시 비밀번호를 발급했습니다.`);
-    await loadUsers();
+    showMessage(`${user.username} 계정의 비밀번호를 변경했습니다.`);
+    await loadUsers().catch(() => showMessage('비밀번호는 변경됐지만 목록을 새로 불러오지 못했습니다. 새로고침해 주세요.', 'error'));
   } catch (error) {
     if (error.code === 'stale_revision' || error.code === 'database_changed') {
       await loadUsers().catch(() => undefined);
+      passwordResetPending = false;
+      dialogTriggers.set(elements.passwordResetDialog, elements.refresh);
       dialogTriggers.set(elements.userDialog, elements.refresh);
+      closeDialog(elements.passwordResetDialog);
       closeDialog(elements.userDialog);
       showMessage('다른 관리자의 변경을 반영했습니다. 목록에서 계정을 다시 선택해 주세요.', 'error');
     } else {
-      showMessage(error.message, 'error');
+      elements.resetPasswordError.textContent = error.message;
+      elements.resetPasswordError.hidden = false;
     }
   } finally {
-    elements.resetPassword.disabled = false;
+    passwordResetPending = false;
+    elements.passwordResetForm.setAttribute('aria-busy', 'false');
+    for (const control of elements.passwordResetForm.querySelectorAll('input, button')) control.disabled = false;
+    elements.passwordResetSubmit.textContent = '비밀번호 변경';
   }
 });
 

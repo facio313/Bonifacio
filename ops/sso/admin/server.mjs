@@ -505,7 +505,18 @@ async function handleAdminApi(request, response, url, dependencies) {
   if (request.method === 'POST' && resetMatch) {
     const expectedRevision = requiredRevision(request);
     const username = resetMatch[1];
-    let credential;
+    assertAdminMayResetPassword(authorized.database, actor, username);
+    const body = await jsonBody(request);
+    requireExactBody(body, ['newPassword', 'confirmPassword']);
+    const newPassword = normalizeChosenPassword(body.newPassword);
+    const confirmPassword = normalizeChosenPassword(body.confirmPassword, '새 비밀번호 확인');
+    if (newPassword !== confirmPassword) {
+      throw new AdminError(
+        400,
+        'password_confirmation_mismatch',
+        '새 비밀번호 확인이 일치하지 않습니다.',
+      );
+    }
     await dependencies.store.mutate({
       actor: actor.username,
       action: 'reset_password',
@@ -515,14 +526,11 @@ async function handleAdminApi(request, response, url, dependencies) {
         assertAuthorizedAdmin(database, actor);
         assertAdminMayResetPassword(database, actor, username);
         const user = database.users[username];
-        credential = await dependencies.generateCredential();
-        user.password = credential.digest;
+        user.password = await dependencies.hashCredential(newPassword);
       },
     });
-    if (!credential) throw new AdminError(500, 'hash_failed', '임시 비밀번호를 만들 수 없습니다.');
     const current = await dependencies.store.readVersioned();
     sendJson(response, 200, {
-      temporaryPassword: credential.password,
       revision: current.revision,
     });
     return;

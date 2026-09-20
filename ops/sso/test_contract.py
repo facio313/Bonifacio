@@ -260,7 +260,7 @@ class PortfolioSsoContractTests(unittest.TestCase):
         self.assertIn("password_change:\n    disable: true", configuration)
         self.assertIn("disable_healthcheck: true", configuration)
         self.assertIn("password_reset:\n    disable: true", configuration)
-        self.assertIn("min_length: 14", configuration)
+        self.assertIn("min_length: 12", configuration)
         self.assertIn("require_special: true", configuration)
         self.assertIn("/api/account/password", server)
         self.assertIn("currentPassword", server)
@@ -272,7 +272,7 @@ class PortfolioSsoContractTests(unittest.TestCase):
         self.assertNotIn("'--password'", library)
         self.assertIn('id="user-profile"', user_page)
         self.assertIn('id="password-form"', user_page)
-        self.assertEqual(user_page.count('minlength="14"'), 2)
+        self.assertEqual(user_page.count('minlength="12"'), 2)
         for administrator_control in (
             'id="open-create"',
             'id="users"',
