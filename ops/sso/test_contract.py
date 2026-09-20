@@ -9,6 +9,14 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class PortfolioSsoContractTests(unittest.TestCase):
+    def test_portal_canonical_redirect_preserves_login_context(self) -> None:
+        portal = (ROOT / "ops/sso/nginx/authelia-portal.conf").read_text(
+            encoding="utf-8"
+        )
+        canonical = portal.split("location = /sso {", 1)[1].split("\n}", 1)[0]
+        self.assertIn("return 308 /sso/$is_args$args;", canonical)
+        self.assertIn('add_header Cache-Control "no-store" always;', canonical)
+
     def test_portal_streams_large_assets_without_disk_temp(self) -> None:
         portal = (ROOT / "ops/sso/nginx/authelia-portal.conf").read_text(
             encoding="utf-8"
