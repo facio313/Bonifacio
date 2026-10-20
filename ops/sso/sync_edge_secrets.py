@@ -29,6 +29,11 @@ class Target:
 
 
 TARGETS = {
+    "blog": Target(
+        Path("/home/cks/.config/blog/sso-edge-secret"),
+        Path("/etc/nginx/snippets/blog-edge-secret.conf"),
+        0o640,
+    ),
     "admin": Target(
         Path("/home/cks/.config/portfolio-sso/secrets/admin-edge-secret"),
         Path("/etc/nginx/snippets/bonifacio-sso-admin-edge-secret.conf"),

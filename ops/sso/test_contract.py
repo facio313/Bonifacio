@@ -74,17 +74,18 @@ class PortfolioSsoContractTests(unittest.TestCase):
     def test_public_blog_proxy_strips_identity_and_rebuilds_forwarded_headers(self) -> None:
         blog = (ROOT / "ops/sso/nginx/blog-public.conf").read_text(encoding="utf-8")
         landing = (ROOT / "src/components/sections/Blog.tsx").read_text(encoding="utf-8")
+        public = blog.split("location ^~ /blog/ {", 1)[1]
 
         self.assertIn("location = /blog {", blog)
         self.assertIn("return 308 /blog/;", blog)
         self.assertIn("location ^~ /blog/ {", blog)
-        self.assertEqual(blog.count("proxy_pass "), 1)
-        self.assertIn("proxy_pass http://127.0.0.1:5176;", blog)
-        self.assertNotIn("auth_request", blog)
+        self.assertEqual(public.count("proxy_pass "), 1)
+        self.assertIn("proxy_pass http://127.0.0.1:5176;", public)
+        self.assertNotIn("auth_request", public)
         self.assertNotIn("$proxy_add_x_forwarded_for", blog)
         self.assertNotIn("0.0.0.0", blog)
         for header in ("Remote-User", "Remote-Email", "Remote-Name", "Remote-Groups"):
-            self.assertIn(f'proxy_set_header {header} "";', blog)
+            self.assertIn(f'proxy_set_header {header} "";', public)
         for directive in (
             "proxy_set_header Host $host;",
             "proxy_set_header X-Real-IP $remote_addr;",
@@ -96,10 +97,34 @@ class PortfolioSsoContractTests(unittest.TestCase):
             'proxy_set_header Authorization "";',
             'proxy_set_header Cookie "";',
         ):
-            self.assertIn(directive, blog)
+            self.assertIn(directive, public)
+        self.assertIn('proxy_set_header X-Portfolio-Edge-Secret "";', public)
 
         self.assertIn("Blog app · now open", landing)
         self.assertNotIn("opening soon", landing)
+
+    def test_blog_author_api_is_guarded_without_changing_public_pages(self) -> None:
+        blog = (ROOT / "ops/sso/nginx/blog-public.conf").read_text(encoding="utf-8")
+        configuration = (ROOT / "ops/sso/configuration.yml").read_text(encoding="utf-8")
+        author = blog.split("location ^~ /blog/api/author/ {", 1)[1].split("\n}", 1)[0]
+        self.assertIn("auth_request /internal/authelia/authz;", author)
+        self.assertIn("proxy_pass http://127.0.0.1:9176;", author)
+        self.assertIn("proxy_set_header Remote-User $blog_author_user;", author)
+        self.assertIn("proxy_set_header Remote-Groups $blog_author_groups;", author)
+        self.assertIn("include /etc/nginx/snippets/blog-edge-secret.conf;", author)
+        self.assertIn('proxy_set_header Authorization "";', author)
+        self.assertIn('proxy_set_header Cookie "";', author)
+        self.assertIn("error_page 401 = @blog_login_required;", author)
+        self.assertIn("error_page 403 = @blog_author_forbidden;", author)
+        self.assertIn("proxy_intercept_errors off;", author)
+        self.assertIn("return 401 '{\"error\":\"login_required\"}';", blog)
+        self.assertIn("return 403 '{\"error\":\"author_forbidden\"}';", blog)
+        self.assertIn("'^/blog/api/author(?:[/?].*)?$'", configuration)
+        owner_rule = configuration.index("subject: user:cks")
+        owner_deny = configuration.index("policy: deny", owner_rule)
+        general_rule = configuration.index("subject: group:user")
+        self.assertLess(owner_rule, owner_deny)
+        self.assertLess(owner_deny, general_rule)
 
     def test_admin_acl_precedes_general_access_and_password_change_is_local(self) -> None:
         configuration = (ROOT / "ops/sso/configuration.yml").read_text(encoding="utf-8")

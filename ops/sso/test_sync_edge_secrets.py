@@ -6,10 +6,23 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from sync_edge_secrets import SECRET_PATTERN, read_or_create_secret
+from sync_edge_secrets import SECRET_PATTERN, TARGETS, read_or_create_secret
 
 
 class EdgeSecretTests(unittest.TestCase):
+    def test_blog_has_an_independent_private_group_readable_secret(self) -> None:
+        blog = TARGETS["blog"]
+        self.assertEqual(
+            blog.secret_path, Path("/home/cks/.config/blog/sso-edge-secret")
+        )
+        self.assertEqual(
+            blog.nginx_path, Path("/etc/nginx/snippets/blog-edge-secret.conf")
+        )
+        self.assertEqual(blog.secret_mode, 0o640)
+        self.assertEqual(
+            len({target.secret_path for target in TARGETS.values()}), len(TARGETS)
+        )
+
     def test_creates_mode_0600_secret_and_reuses_it(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             parent = Path(directory) / "secrets"

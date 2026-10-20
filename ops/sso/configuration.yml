@@ -42,6 +42,18 @@ access_control:
     - domain:
         - bonifacio.work
         - www.bonifacio.work
+      resources: &blog-author-resources
+        - '^/blog/api/author(?:[/?].*)?$'
+      subject: user:cks
+      policy: one_factor
+    - domain:
+        - bonifacio.work
+        - www.bonifacio.work
+      resources: *blog-author-resources
+      policy: deny
+    - domain:
+        - bonifacio.work
+        - www.bonifacio.work
       resources:
         - '^/sso/admin(?:[/?].*)?$'
       subject: group:admin
