@@ -1,275 +1,607 @@
-const state = { csrfToken: '', actor: null, users: [], revision: '' };
-const actor = document.querySelector('#actor');
-const message = document.querySelector('#message');
-const usersRoot = document.querySelector('#users');
-const createForm = document.querySelector('#create-form');
-const passwordForm = document.querySelector('#password-form');
-const passwordSubmit = document.querySelector('#password-submit');
-const credentialDialog = document.querySelector('#credential-dialog');
-const credentialUsername = document.querySelector('#credential-username');
-const credentialPassword = document.querySelector('#credential-password');
-const createRolesRoot = document.querySelector('#create-roles');
-const ROLE_NAMES = ['user', 'developer', 'admin'];
-const ROLE_LABELS = {
-  user: 'user · 일반 서비스 이용',
-  developer: 'developer · 개발 기능 이용',
-  admin: 'admin · 중앙 사용자 관리',
+import {
+  PAGE_SIZE,
+  ROLE_DESCRIPTIONS,
+  applicationSummary,
+  filterUsers,
+  paginateUsers,
+  roleLabel,
+  userMetrics,
+} from './ui-model.js';
+
+const state = {
+  csrfToken: '',
+  actor: null,
+  users: [],
+  revision: '',
+  authorization: { roles: [], applications: [], chiefAdminRole: 'chief-admin' },
+  filters: { query: '', role: 'all', status: 'all', application: 'all' },
+  page: 1,
+  selectedUsername: null,
 };
 
+const elements = {
+  actor: document.querySelector('#actor'),
+  message: document.querySelector('#message'),
+  users: document.querySelector('#users'),
+  emptyState: document.querySelector('#empty-state'),
+  resultCount: document.querySelector('#result-count'),
+  pageStatus: document.querySelector('#page-status'),
+  previousPage: document.querySelector('#previous-page'),
+  nextPage: document.querySelector('#next-page'),
+  search: document.querySelector('#search'),
+  roleFilter: document.querySelector('#role-filter'),
+  statusFilter: document.querySelector('#status-filter'),
+  applicationFilter: document.querySelector('#application-filter'),
+  refresh: document.querySelector('#refresh'),
+  openCreate: document.querySelector('#open-create'),
+  createDialog: document.querySelector('#create-dialog'),
+  createForm: document.querySelector('#create-form'),
+  createSubmit: document.querySelector('#create-submit'),
+  createAuthorization: document.querySelector('#create-authorization'),
+  userDialog: document.querySelector('#user-dialog'),
+  userForm: document.querySelector('#user-form'),
+  selectedDisplayName: document.querySelector('#selected-display-name'),
+  selectedUsername: document.querySelector('#selected-username'),
+  editDisplayName: document.querySelector('#edit-display-name'),
+  editEmail: document.querySelector('#edit-email'),
+  editAuthorization: document.querySelector('#edit-authorization'),
+  editDisabled: document.querySelector('#edit-disabled'),
+  editLockNote: document.querySelector('#edit-lock-note'),
+  saveUser: document.querySelector('#save-user'),
+  resetPassword: document.querySelector('#reset-password'),
+  passwordResetDialog: document.querySelector('#password-reset-dialog'),
+  passwordResetForm: document.querySelector('#password-reset-form'),
+  passwordResetDescription: document.querySelector('#password-reset-description'),
+  passwordResetSubmit: document.querySelector('#password-reset-submit'),
+  resetNewPassword: document.querySelector('#reset-new-password'),
+  resetConfirmPassword: document.querySelector('#reset-confirm-password'),
+  resetPasswordError: document.querySelector('#reset-password-error'),
+  dangerZone: document.querySelector('.danger-zone'),
+  credentialDialog: document.querySelector('#credential-dialog'),
+  credentialUsername: document.querySelector('#credential-username'),
+  credentialPassword: document.querySelector('#credential-password'),
+  copyPassword: document.querySelector('#copy-password'),
+  metrics: {
+    total: document.querySelector('#metric-total'),
+    active: document.querySelector('#metric-active'),
+    administrators: document.querySelector('#metric-administrators'),
+    disabled: document.querySelector('#metric-disabled'),
+  },
+};
+
+let createAssignmentControls;
+let editAssignmentControls;
+let messageTimer;
+let passwordResetPending = false;
+const dialogTriggers = new WeakMap();
+
 function showMessage(text, tone = 'success') {
-  message.textContent = text;
-  message.dataset.tone = tone;
-  message.hidden = false;
+  window.clearTimeout(messageTimer);
+  elements.message.textContent = text;
+  elements.message.dataset.tone = tone;
+  elements.message.hidden = false;
+  messageTimer = window.setTimeout(() => {
+    elements.message.hidden = true;
+  }, tone === 'error' ? 9000 : 6000);
 }
 
 async function request(path, options = {}) {
   const headers = new Headers(options.headers);
+  headers.set('Accept', 'application/json');
   if (options.body) headers.set('Content-Type', 'application/json');
   if (options.method && options.method !== 'GET') {
     headers.set('X-CSRF-Token', state.csrfToken);
     headers.set('If-Match', state.revision);
   }
-  const response = await fetch(`/sso/admin/api${path}`, { ...options, headers });
+  const response = await fetch(`/sso/admin/api${path}`, {
+    cache: 'no-store',
+    credentials: 'same-origin',
+    ...options,
+    headers,
+  });
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.message || `요청 실패 (${response.status})`);
+  if (!response.ok) {
+    const error = new Error(payload.message || `요청 실패 (${response.status})`);
+    error.status = response.status;
+    error.code = payload.error;
+    throw error;
+  }
   return payload;
 }
 
-function input(labelText, value, type = 'text') {
-  const label = document.createElement('label');
-  label.textContent = labelText;
-  const field = document.createElement('input');
-  field.type = type;
-  field.value = value;
-  field.required = true;
-  label.append(field);
-  return { label, field };
+function isChiefAdmin() {
+  return state.actor?.role === state.authorization.chiefAdminRole;
 }
 
-function roleControls(selectedRoles = ['user']) {
-  const fieldset = document.createElement('fieldset');
-  fieldset.className = 'role-fieldset';
-  const legend = document.createElement('legend');
-  legend.textContent = '중앙 역할';
-  const grid = document.createElement('div');
-  grid.className = 'role-grid';
-  const inputs = new Map();
+function assignmentControls(
+  selectedRole = 'user',
+  selectedApplications = [],
+  { lockRole = false, lockAll = false } = {},
+) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'authorization-fields';
 
-  for (const role of ROLE_NAMES) {
+  const roleLabelElement = document.createElement('label');
+  roleLabelElement.className = 'role-select-label';
+  roleLabelElement.append(document.createTextNode('역할'));
+  const roleSelect = document.createElement('select');
+  roleSelect.className = 'role-select';
+  const availableRoles = isChiefAdmin()
+    ? state.authorization.roles
+    : state.authorization.roles.filter((role) => role === 'user' || role === selectedRole);
+  for (const role of availableRoles) {
+    const option = document.createElement('option');
+    option.value = role;
+    option.textContent = roleLabel(role);
+    option.selected = role === selectedRole;
+    roleSelect.append(option);
+  }
+  roleSelect.disabled = lockRole || lockAll;
+  const roleDescription = document.createElement('p');
+  roleDescription.className = 'role-description';
+  roleLabelElement.append(roleSelect, roleDescription);
+
+  const applicationsFieldset = document.createElement('fieldset');
+  applicationsFieldset.className = 'application-fieldset';
+  const legend = document.createElement('legend');
+  legend.textContent = '서비스 접근';
+  const hint = document.createElement('p');
+  hint.className = 'field-hint';
+  const applicationGrid = document.createElement('div');
+  applicationGrid.className = 'application-grid';
+  const applicationInputs = new Map();
+  const rememberedApplications = new Set(
+    selectedRole === state.authorization.chiefAdminRole ? [] : selectedApplications,
+  );
+
+  for (const application of state.authorization.applications) {
     const label = document.createElement('label');
     label.className = 'check-row';
     const field = document.createElement('input');
     field.type = 'checkbox';
-    field.value = role;
-    field.checked = selectedRoles.includes(role);
-    field.defaultChecked = field.checked;
-    field.disabled = role === 'user';
-    label.append(field, document.createTextNode(` ${ROLE_LABELS[role]}`));
-    inputs.set(role, field);
-    grid.append(label);
+    field.value = application.id;
+    field.checked = selectedApplications.includes(application.id);
+    label.append(field, document.createTextNode(application.label));
+    applicationInputs.set(application.id, field);
+    field.addEventListener('change', () => {
+      if (field.checked) rememberedApplications.add(application.id);
+      else rememberedApplications.delete(application.id);
+    });
+    applicationGrid.append(label);
   }
 
-  const synchronize = (changedRole) => {
-    const user = inputs.get('user');
-    const developer = inputs.get('developer');
-    const admin = inputs.get('admin');
-    user.checked = true;
-    if (changedRole === 'admin' && admin.checked) developer.checked = true;
-    if (changedRole === 'developer' && !developer.checked) admin.checked = false;
+  const synchronize = () => {
+    const role = roleSelect.value;
+    const chief = role === state.authorization.chiefAdminRole;
+    roleDescription.textContent = ROLE_DESCRIPTIONS[role] ?? '';
+    hint.textContent = chief ? '모든 서비스가 자동으로 허용됩니다.' : '허용할 서비스만 선택하세요.';
+    for (const field of applicationInputs.values()) {
+      field.disabled = chief || lockAll;
+      field.checked = chief || rememberedApplications.has(field.value);
+    }
   };
-  for (const [role, field] of inputs) {
-    field.addEventListener('change', () => synchronize(role));
-  }
+  roleSelect.addEventListener('change', synchronize);
   synchronize();
-  fieldset.append(legend, grid);
+
+  applicationsFieldset.append(legend, hint, applicationGrid);
+  wrapper.append(roleLabelElement, applicationsFieldset);
   return {
-    element: fieldset,
-    value: () => ROLE_NAMES.filter((role) => inputs.get(role).checked),
-    set: (roles) => {
-      for (const role of ROLE_NAMES) {
-        const checked = roles.includes(role);
-        inputs.get(role).checked = checked;
-        inputs.get(role).defaultChecked = checked;
-      }
+    element: wrapper,
+    value: () => ({
+      role: roleSelect.value,
+      applications: roleSelect.value === state.authorization.chiefAdminRole
+        ? []
+        : state.authorization.applications
+          .map((application) => application.id)
+          .filter((id) => applicationInputs.get(id).checked),
+    }),
+    reset: () => {
+      roleSelect.value = 'user';
+      rememberedApplications.clear();
+      for (const field of applicationInputs.values()) field.checked = false;
       synchronize();
     },
   };
 }
 
-const createRoleControls = roleControls();
-createRolesRoot.replaceChildren(createRoleControls.element);
+function openDialog(dialog, trigger) {
+  dialogTriggers.set(dialog, trigger ?? document.activeElement);
+  dialog.showModal();
+  window.requestAnimationFrame(() => {
+    const focusTarget = dialog.querySelector('[autofocus]:not(:disabled)')
+      ?? dialog.querySelector('input:not(:disabled), select:not(:disabled), button:not(:disabled)');
+    focusTarget?.focus();
+  });
+}
 
-function showCredential(username, password) {
-  credentialUsername.textContent = username;
-  credentialPassword.textContent = password;
-  credentialDialog.showModal();
+function closeDialog(dialog) {
+  if (dialog === elements.passwordResetDialog && passwordResetPending) return;
+  if (dialog.open) dialog.close();
+}
+
+for (const dialog of document.querySelectorAll('dialog')) {
+  dialog.addEventListener('close', () => {
+    dialogTriggers.get(dialog)?.focus?.();
+    dialogTriggers.delete(dialog);
+    if (dialog === elements.userDialog) {
+      state.selectedUsername = null;
+      for (const row of elements.users.querySelectorAll('.user-row')) row.setAttribute('aria-selected', 'false');
+    }
+  });
+  dialog.addEventListener('click', (event) => {
+    if (event.target === dialog) closeDialog(dialog);
+  });
+}
+
+for (const button of document.querySelectorAll('[data-close-dialog]')) {
+  button.addEventListener('click', () => closeDialog(button.closest('dialog')));
+}
+
+function showCredential(username, password, trigger = document.activeElement) {
+  elements.credentialUsername.textContent = username;
+  elements.credentialPassword.textContent = password;
+  openDialog(elements.credentialDialog, trigger);
+}
+
+function updateMetrics() {
+  const metrics = userMetrics(state.users);
+  for (const [key, value] of Object.entries(metrics)) elements.metrics[key].textContent = String(value);
+}
+
+function userRow(user, tabStop) {
+  const row = document.createElement('button');
+  row.type = 'button';
+  row.className = 'user-row';
+  row.dataset.username = user.username;
+  row.tabIndex = tabStop ? 0 : -1;
+  row.setAttribute('role', 'option');
+  row.setAttribute('aria-selected', String(user.username === state.selectedUsername));
+
+  const identity = document.createElement('span');
+  identity.className = 'user-identity';
+  const name = document.createElement('strong');
+  name.textContent = user.displayName || user.username;
+  const detail = document.createElement('span');
+  detail.textContent = `@${user.username} · ${user.email}`;
+  identity.append(name, detail);
+
+  const role = document.createElement('span');
+  role.className = 'role-badge';
+  role.textContent = roleLabel(user.role);
+
+  const services = document.createElement('span');
+  services.className = 'service-summary';
+  const summary = applicationSummary(user, state.authorization.applications);
+  if (summary.labels.length === 0) {
+    const chip = document.createElement('span');
+    chip.className = 'service-chip';
+    chip.textContent = '권한 없음';
+    services.append(chip);
+  } else {
+    for (const label of summary.labels) {
+      const chip = document.createElement('span');
+      chip.className = 'service-chip';
+      chip.textContent = label;
+      services.append(chip);
+    }
+  }
+  if (summary.overflow > 0) {
+    const more = document.createElement('span');
+    more.className = 'more-chip';
+    more.textContent = `+${summary.overflow}`;
+    more.setAttribute('aria-label', `추가 서비스 ${summary.overflow}개`);
+    services.append(more);
+  }
+
+  const status = document.createElement('span');
+  status.className = `status-badge ${user.disabled ? 'disabled' : 'active'}`;
+  status.textContent = user.disabled ? '비활성' : '활성';
+  const action = document.createElement('span');
+  action.className = 'row-action';
+  action.textContent = '편집';
+
+  row.append(identity, role, services, status, action);
+  row.addEventListener('click', () => openUserEditor(user.username, row));
+  return row;
 }
 
 function renderUsers() {
-  usersRoot.replaceChildren();
-  for (const user of state.users) {
-    const card = document.createElement('article');
-    card.className = 'user-card';
+  const filtered = filterUsers(state.users, state.filters);
+  const page = paginateUsers(filtered, state.page, PAGE_SIZE);
+  state.page = page.page;
+  const selectedVisible = page.users.some((user) => user.username === state.selectedUsername);
+  elements.users.replaceChildren(...page.users.map((user, index) => (
+    userRow(user, selectedVisible ? user.username === state.selectedUsername : index === 0)
+  )));
+  elements.emptyState.hidden = filtered.length !== 0;
+  const range = filtered.length === 0 ? '0명' : `${page.start + 1}–${page.end}명`;
+  elements.resultCount.textContent = `전체 ${state.users.length}명 중 ${filtered.length}명 · ${range} 표시`;
+  elements.pageStatus.textContent = `${page.page} / ${page.pageCount}`;
+  elements.previousPage.disabled = page.page <= 1;
+  elements.nextPage.disabled = page.page >= page.pageCount;
+}
 
-    const heading = document.createElement('div');
-    heading.className = 'user-heading';
-    const identity = document.createElement('div');
-    const title = document.createElement('h3');
-    title.textContent = user.username;
-    const badge = document.createElement('span');
-    badge.className = `badge ${user.disabled ? 'disabled' : 'active'}`;
-    badge.textContent = user.disabled ? '비활성' : '활성';
-    identity.append(title, badge);
-    const groups = document.createElement('small');
-    groups.textContent = user.groups.join(' · ');
-    heading.append(identity, groups);
-
-    const form = document.createElement('form');
-    form.className = 'user-form';
-    const displayName = input('표시 이름', user.displayName);
-    const email = input('이메일 (변경하려면 새 계정을 발급하세요)', user.email, 'email');
-    email.field.disabled = true;
-    const roles = roleControls(user.groups);
-    const disabledLabel = document.createElement('label');
-    disabledLabel.className = 'check-row';
-    const disabledInput = document.createElement('input');
-    disabledInput.type = 'checkbox';
-    disabledInput.checked = user.disabled;
-    disabledLabel.append(disabledInput, document.createTextNode(' 로그인 비활성화'));
-
-    const actions = document.createElement('div');
-    actions.className = 'actions';
-    const save = document.createElement('button');
-    save.type = 'submit';
-    save.textContent = '변경 저장';
-    const reset = document.createElement('button');
-    reset.type = 'button';
-    reset.className = 'secondary';
-    reset.textContent = '임시 비밀번호 재발급';
-    actions.append(save, reset);
-    form.append(displayName.label, email.label, roles.element, disabledLabel, actions);
-
-    form.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      save.disabled = true;
-      try {
-        await request(`/users/${encodeURIComponent(user.username)}`, {
-          method: 'PATCH',
-          body: JSON.stringify({
-            displayName: displayName.field.value,
-            roles: roles.value(),
-            disabled: disabledInput.checked,
-          }),
-        });
-        showMessage(`${user.username} 계정을 변경했습니다.`);
-        await loadUsers();
-      } catch (error) {
-        showMessage(error.message, 'error');
-      } finally {
-        save.disabled = false;
-      }
-    });
-
-    reset.addEventListener('click', async () => {
-      if (!window.confirm(`${user.username} 사용자의 기존 비밀번호를 무효화할까요?`)) return;
-      reset.disabled = true;
-      try {
-        const payload = await request(`/users/${encodeURIComponent(user.username)}/reset-password`, {
-          method: 'POST',
-          body: '{}',
-        });
-        showCredential(user.username, payload.temporaryPassword);
-        showMessage(`${user.username} 사용자의 임시 비밀번호를 발급했습니다.`);
-        await loadUsers();
-      } catch (error) {
-        showMessage(error.message, 'error');
-      } finally {
-        reset.disabled = false;
-      }
-    });
-
-    card.append(heading, form);
-    usersRoot.append(card);
-  }
+function populateApplicationFilter() {
+  const options = state.authorization.applications.map((application) => {
+    const option = document.createElement('option');
+    option.value = application.id;
+    option.textContent = application.label;
+    return option;
+  });
+  elements.applicationFilter.append(...options);
 }
 
 async function loadUsers() {
   const payload = await request('/users');
   state.users = payload.users;
   state.revision = payload.revision;
-  passwordSubmit.disabled = false;
+  updateMetrics();
   renderUsers();
 }
 
-passwordForm.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const data = new FormData(passwordForm);
-  const currentPassword = data.get('currentPassword');
-  const newPassword = data.get('newPassword');
-  const confirmPassword = data.get('confirmPassword');
-  if (newPassword !== confirmPassword) {
-    showMessage('새 비밀번호 확인이 일치하지 않습니다.', 'error');
-    return;
+function openUserEditor(username, trigger) {
+  const user = state.users.find((candidate) => candidate.username === username);
+  if (!user) return;
+  state.selectedUsername = username;
+  for (const row of elements.users.querySelectorAll('.user-row')) {
+    row.setAttribute('aria-selected', String(row === trigger));
+    row.tabIndex = row === trigger ? 0 : -1;
   }
-  passwordSubmit.disabled = true;
+
+  const actorIsSelf = user.username === state.actor.username;
+  const privilegedTargetLocked = !isChiefAdmin() && user.role !== 'user';
+  const fullyLocked = privilegedTargetLocked;
+  elements.selectedDisplayName.textContent = user.displayName || user.username;
+  elements.selectedUsername.textContent = `@${user.username}`;
+  elements.editDisplayName.value = user.displayName;
+  elements.editDisplayName.disabled = fullyLocked;
+  elements.editEmail.value = user.email;
+  elements.editDisabled.checked = user.disabled;
+  elements.editDisabled.disabled = actorIsSelf || fullyLocked;
+  elements.editAuthorization.replaceChildren();
+  editAssignmentControls = assignmentControls(user.role, user.applications, {
+    lockRole: actorIsSelf,
+    lockAll: actorIsSelf || fullyLocked,
+  });
+  elements.editAuthorization.append(editAssignmentControls.element);
+  elements.saveUser.disabled = fullyLocked;
+  elements.dangerZone.hidden = actorIsSelf || !isChiefAdmin();
+  elements.resetPassword.disabled = actorIsSelf || !isChiefAdmin();
+  elements.editLockNote.hidden = !(actorIsSelf || fullyLocked || !isChiefAdmin());
+  if (actorIsSelf) {
+    elements.editLockNote.textContent = '내 역할·서비스·상태는 여기서 바꿀 수 없습니다. 비밀번호는 내 정보 화면에서 변경하세요.';
+  } else if (fullyLocked) {
+    elements.editLockNote.textContent = '관리자 계정은 최고 관리자만 변경할 수 있습니다.';
+  } else if (!isChiefAdmin()) {
+    elements.editLockNote.textContent = '다른 사용자의 비밀번호는 최고 관리자만 변경할 수 있습니다.';
+  }
+  openDialog(elements.userDialog, trigger);
+}
+
+function resetFilters() {
+  state.page = 1;
+  state.filters = {
+    query: elements.search.value,
+    role: elements.roleFilter.value,
+    status: elements.statusFilter.value,
+    application: elements.applicationFilter.value,
+  };
+  renderUsers();
+}
+
+for (const field of [elements.search, elements.roleFilter, elements.statusFilter, elements.applicationFilter]) {
+  field.addEventListener('input', resetFilters);
+  field.addEventListener('change', resetFilters);
+}
+
+elements.users.addEventListener('keydown', (event) => {
+  if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+  const rows = [...elements.users.querySelectorAll('.user-row')];
+  if (rows.length === 0) return;
+  const current = Math.max(0, rows.indexOf(document.activeElement));
+  const next = event.key === 'Home'
+    ? 0
+    : event.key === 'End'
+      ? rows.length - 1
+      : event.key === 'ArrowDown'
+        ? Math.min(rows.length - 1, current + 1)
+        : Math.max(0, current - 1);
+  event.preventDefault();
+  for (const row of rows) row.tabIndex = row === rows[next] ? 0 : -1;
+  rows[next].focus();
+});
+
+elements.previousPage.addEventListener('click', () => {
+  state.page -= 1;
+  renderUsers();
+  elements.users.querySelector('.user-row')?.focus();
+});
+elements.nextPage.addEventListener('click', () => {
+  state.page += 1;
+  renderUsers();
+  elements.users.querySelector('.user-row')?.focus();
+});
+
+elements.refresh.addEventListener('click', async () => {
+  elements.refresh.disabled = true;
   try {
-    const payload = await request('/account/password', {
-      method: 'POST',
-      body: JSON.stringify({ currentPassword, newPassword, confirmPassword }),
-    });
-    state.revision = payload.revision;
-    passwordForm.reset();
-    window.location.assign(payload.logoutUrl);
+    await loadUsers();
+    showMessage('최신 사용자 목록을 불러왔습니다.');
   } catch (error) {
     showMessage(error.message, 'error');
   } finally {
-    passwordSubmit.disabled = false;
+    elements.refresh.disabled = false;
   }
 });
 
-createForm.addEventListener('submit', async (event) => {
+elements.openCreate.addEventListener('click', () => {
+  elements.createForm.reset();
+  createAssignmentControls.reset();
+  openDialog(elements.createDialog, elements.openCreate);
+});
+
+elements.createForm.addEventListener('submit', async (event) => {
   event.preventDefault();
-  const button = createForm.querySelector('button[type="submit"]');
-  button.disabled = true;
+  elements.createSubmit.disabled = true;
   try {
-    const data = new FormData(createForm);
+    const data = new FormData(elements.createForm);
+    const assignment = createAssignmentControls.value();
     const payload = await request('/users', {
       method: 'POST',
       body: JSON.stringify({
         username: data.get('username'),
         displayName: data.get('displayName'),
         email: data.get('email'),
-        roles: createRoleControls.value(),
+        role: assignment.role,
+        applications: assignment.applications,
       }),
     });
-    showCredential(payload.user.username, payload.temporaryPassword);
+    state.revision = payload.revision;
+    closeDialog(elements.createDialog);
+    showCredential(payload.user.username, payload.temporaryPassword, elements.openCreate);
     showMessage(`${payload.user.username} 계정을 만들었습니다.`);
-    createForm.reset();
-    createRoleControls.set(['user']);
     await loadUsers();
   } catch (error) {
     showMessage(error.message, 'error');
+    if (error.code === 'stale_revision' || error.code === 'database_changed') {
+      await loadUsers().catch(() => undefined);
+    }
   } finally {
-    button.disabled = false;
+    elements.createSubmit.disabled = false;
   }
 });
 
-document.querySelector('#refresh').addEventListener('click', () => {
-  loadUsers().catch((error) => showMessage(error.message, 'error'));
+elements.userForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const user = state.users.find((candidate) => candidate.username === state.selectedUsername);
+  if (!user || !editAssignmentControls) return;
+  elements.saveUser.disabled = true;
+  try {
+    const assignment = editAssignmentControls.value();
+    await request(`/users/${encodeURIComponent(user.username)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        displayName: elements.editDisplayName.value,
+        role: assignment.role,
+        applications: assignment.applications,
+        disabled: elements.editDisabled.checked,
+      }),
+    });
+    closeDialog(elements.userDialog);
+    showMessage(`${user.username} 계정을 변경했습니다.`);
+    await loadUsers();
+    const updatedRow = [...elements.users.querySelectorAll('.user-row')]
+      .find((row) => row.dataset.username === user.username);
+    (updatedRow ?? elements.refresh).focus();
+  } catch (error) {
+    if (error.code === 'stale_revision' || error.code === 'database_changed') {
+      await loadUsers().catch(() => undefined);
+      dialogTriggers.set(elements.userDialog, elements.refresh);
+      closeDialog(elements.userDialog);
+      showMessage('다른 관리자의 변경을 반영했습니다. 목록에서 계정을 다시 선택해 주세요.', 'error');
+    } else {
+      showMessage(error.message, 'error');
+    }
+  } finally {
+    elements.saveUser.disabled = false;
+  }
 });
 
-document.querySelector('#copy-password').addEventListener('click', async () => {
+elements.resetPassword.addEventListener('click', () => {
+  const user = state.users.find((candidate) => candidate.username === state.selectedUsername);
+  if (!user || !isChiefAdmin() || user.username === state.actor.username) return;
+  elements.passwordResetForm.reset();
+  elements.resetPasswordError.hidden = true;
+  elements.passwordResetDescription.textContent = `${user.username} 계정의 새 비밀번호를 입력하세요. 변경하면 기존 비밀번호로 로그인할 수 없습니다.`;
+  openDialog(elements.passwordResetDialog, elements.resetPassword);
+});
+
+elements.passwordResetDialog.addEventListener('cancel', (event) => {
+  if (passwordResetPending) event.preventDefault();
+});
+
+elements.passwordResetDialog.addEventListener('close', () => {
+  elements.passwordResetForm.reset();
+  elements.resetPasswordError.textContent = '';
+  elements.resetPasswordError.hidden = true;
+});
+
+elements.passwordResetForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const user = state.users.find((candidate) => candidate.username === state.selectedUsername);
+  if (!user || !isChiefAdmin() || user.username === state.actor.username || passwordResetPending) return;
+  const newPassword = elements.resetNewPassword.value;
+  const confirmPassword = elements.resetConfirmPassword.value;
+  elements.resetPasswordError.hidden = true;
+  if (newPassword !== confirmPassword) {
+    elements.resetPasswordError.textContent = '새 비밀번호와 확인 입력이 일치하지 않습니다.';
+    elements.resetPasswordError.hidden = false;
+    elements.resetConfirmPassword.focus();
+    return;
+  }
+  if (
+    Array.from(newPassword).length < 12
+    || Array.from(newPassword).length > 128
+    || /[\u0000-\u001f\u007f]/.test(newPassword)
+    || !/[a-z]/.test(newPassword)
+    || !/[0-9]/.test(newPassword)
+    || !/[\p{P}\p{S}]/u.test(newPassword)
+  ) {
+    elements.resetPasswordError.textContent = '새 비밀번호는 12자 이상 128자 이하이며 영문 소문자, 숫자, 특수문자를 모두 포함해야 합니다.';
+    elements.resetPasswordError.hidden = false;
+    elements.resetNewPassword.focus();
+    return;
+  }
+  passwordResetPending = true;
+  elements.passwordResetForm.setAttribute('aria-busy', 'true');
+  for (const control of elements.passwordResetForm.querySelectorAll('input, button')) control.disabled = true;
+  elements.passwordResetSubmit.textContent = '변경 중…';
   try {
-    await navigator.clipboard.writeText(credentialPassword.textContent);
+    const payload = await request(`/users/${encodeURIComponent(user.username)}/reset-password`, {
+      method: 'POST',
+      body: JSON.stringify({ newPassword, confirmPassword }),
+    });
+    state.revision = payload.revision;
+    passwordResetPending = false;
+    dialogTriggers.set(elements.passwordResetDialog, elements.refresh);
+    dialogTriggers.set(elements.userDialog, elements.refresh);
+    closeDialog(elements.passwordResetDialog);
+    closeDialog(elements.userDialog);
+    showMessage(`${user.username} 계정의 비밀번호를 변경했습니다.`);
+    await loadUsers().catch(() => showMessage('비밀번호는 변경됐지만 목록을 새로 불러오지 못했습니다. 새로고침해 주세요.', 'error'));
+  } catch (error) {
+    if (error.code === 'stale_revision' || error.code === 'database_changed') {
+      await loadUsers().catch(() => undefined);
+      passwordResetPending = false;
+      dialogTriggers.set(elements.passwordResetDialog, elements.refresh);
+      dialogTriggers.set(elements.userDialog, elements.refresh);
+      closeDialog(elements.passwordResetDialog);
+      closeDialog(elements.userDialog);
+      showMessage('다른 관리자의 변경을 반영했습니다. 목록에서 계정을 다시 선택해 주세요.', 'error');
+    } else {
+      elements.resetPasswordError.textContent = error.message;
+      elements.resetPasswordError.hidden = false;
+    }
+  } finally {
+    passwordResetPending = false;
+    elements.passwordResetForm.setAttribute('aria-busy', 'false');
+    for (const control of elements.passwordResetForm.querySelectorAll('input, button')) control.disabled = false;
+    elements.passwordResetSubmit.textContent = '비밀번호 변경';
+  }
+});
+
+elements.copyPassword.addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(elements.credentialPassword.textContent);
     showMessage('임시 비밀번호를 클립보드에 복사했습니다.');
   } catch {
-    showMessage('클립보드에 복사하지 못했습니다. 표시된 값을 직접 복사하세요.', 'error');
+    showMessage('복사하지 못했습니다. 표시된 값을 직접 복사하세요.', 'error');
   }
 });
 
-credentialDialog.addEventListener('close', () => {
-  credentialUsername.textContent = '';
-  credentialPassword.textContent = '';
+elements.credentialDialog.addEventListener('close', () => {
+  elements.credentialUsername.textContent = '';
+  elements.credentialPassword.textContent = '';
 });
 
 async function boot() {
@@ -277,10 +609,16 @@ async function boot() {
     const session = await request('/session');
     state.csrfToken = session.csrfToken;
     state.actor = session.actor;
-    actor.textContent = `${session.actor.displayName || session.actor.username} (${session.actor.username})`;
+    state.authorization = session.authorization;
+    elements.actor.textContent = `${session.actor.displayName || session.actor.username} · ${roleLabel(session.actor.role)}`;
+    populateApplicationFilter();
+    createAssignmentControls = assignmentControls();
+    elements.createAuthorization.replaceChildren(createAssignmentControls.element);
     await loadUsers();
+    elements.createSubmit.disabled = false;
+    elements.openCreate.disabled = false;
   } catch (error) {
-    actor.textContent = '접근할 수 없음';
+    elements.actor.textContent = '접근할 수 없음';
     showMessage(error.message, 'error');
   }
 }

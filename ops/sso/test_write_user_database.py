@@ -27,7 +27,7 @@ class WriteUserDatabaseTests(unittest.TestCase):
             self.assertIn("cks@bonifacio.work", source)
             self.assertIn(DIGEST, source)
             self.assertIn(
-                "      - user\n      - developer\n      - admin\n",
+                "      - user\n      - admin\n      - chief-admin\n      - portfolio-v2\n",
                 source,
             )
             self.assertEqual(stat.S_IMODE(output.stat().st_mode), 0o600)

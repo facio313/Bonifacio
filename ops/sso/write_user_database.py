@@ -18,24 +18,38 @@ ARGON2ID = re.compile(
 ROLE_CONTRACT_PATH = Path(__file__).with_name("role-contract.json")
 
 
-def load_bootstrap_roles() -> tuple[str, ...]:
+def load_bootstrap_groups() -> tuple[str, ...]:
     try:
         contract = json.loads(ROLE_CONTRACT_PATH.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise RuntimeError("central SSO role contract is unreadable") from exc
     if contract != {
-        "version": 1,
+        "version": 2,
         "header": "Remote-Groups",
         "separator": ",",
-        "roles": ["user", "developer", "admin"],
+        "roles": ["user", "admin", "chief-admin"],
         "administratorRole": "admin",
+        "globalAdministratorRole": "chief-admin",
         "hierarchy": "prefix",
+        "markerGroup": "portfolio-v2",
+        "applicationGroupPrefix": "access-",
+        "applications": [
+            {"id": "react", "group": "access-react", "label": "React"},
+            {"id": "vue", "group": "access-vue", "label": "Vue"},
+            {"id": "dukkeobi", "group": "access-dukkeobi", "label": "Dukkeobi"},
+            {"id": "ddit-finalproject", "group": "access-ddit-finalproject", "label": "DDIT Final Project"},
+            {"id": "monitor", "group": "access-monitor", "label": "Monitor"},
+            {"id": "pilgrimage", "group": "access-pilgrimage", "label": "Pilgrimage"},
+            {"id": "multtara", "group": "access-multtara", "label": "Multtara"},
+            {"id": "feelmyrythm", "group": "access-feelmyrythm", "label": "FeelMyRythm"},
+            {"id": "garak", "group": "access-garak", "label": "Garak"},
+        ],
     }:
         raise RuntimeError("central SSO role contract is invalid")
-    return tuple(contract["roles"])
+    return (*contract["roles"], contract["markerGroup"])
 
 
-BOOTSTRAP_ROLES = load_bootstrap_roles()
+BOOTSTRAP_GROUPS = load_bootstrap_groups()
 
 
 def yaml_string(value: str) -> str:
@@ -65,7 +79,7 @@ def write_database(
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     fd = os.open(path, flags, 0o600)
-    role_lines = "".join(f"      - {role}\n" for role in BOOTSTRAP_ROLES)
+    group_lines = "".join(f"      - {group}\n" for group in BOOTSTRAP_GROUPS)
     payload = (
         "---\n"
         "users:\n"
@@ -75,7 +89,7 @@ def write_database(
         f"    password: {yaml_string(digest)}\n"
         f"    email: {yaml_string(email)}\n"
         "    groups:\n"
-        f"{role_lines}"
+        f"{group_lines}"
     )
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:

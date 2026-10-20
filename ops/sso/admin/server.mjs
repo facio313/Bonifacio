@@ -11,25 +11,46 @@ import {
 import { access, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { CatalogError, normalizeEntry, readCatalog, saveCatalogEntry } from './catalog.mjs';
+import { catalogAuthorize } from './catalog-auth.mjs';
 
 import {
   ADMIN_ROLE,
+  APPLICATIONS,
+  CHIEF_ADMIN_ROLE,
+  ROLE_NAMES,
   AdminError,
   UserStore,
+  assertAdminMayCreate,
+  assertAdminMayResetPassword,
   assertAdminMutationAllowed,
   assertAuthorizedAdmin,
+  assertAuthorizedUser,
+  assignmentFromWireGroups,
   generateTemporaryCredential,
+  groupsForAssignment,
   hashPassword,
+  normalizeChosenPassword,
   normalizeDisplayName,
   normalizeEmail,
   normalizePassword,
-  normalizeRoles,
+  normalizeApplications,
+  normalizeRole,
   normalizeUsername,
+  publicUser,
   publicUsers,
+  refreshApplications,
   verifyPassword,
 } from './lib.mjs';
 
-const BASE = '/sso/admin';
+const ADMIN_BASE = '/sso/admin';
+const USER_BASE = '/sso/user';
+const ADMIN_CSRF_COOKIE = 'bonifacio_admin_csrf';
+const USER_CSRF_COOKIE = 'bonifacio_user_csrf';
+const PASSWORD_ATTEMPT_LIMIT = 5;
+const PASSWORD_ATTEMPT_WINDOW_MS = 10 * 60 * 1000;
+const PASSWORD_CHANGE_LIMIT = 3;
+const PASSWORD_CHANGE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const directory = dirname(fileURLToPath(import.meta.url));
 const staticDirectory = join(directory, 'public');
 const origin = process.env.ADMIN_ORIGIN ?? 'https://bonifacio.work';
@@ -77,43 +98,52 @@ export function identity(request) {
     throw new AdminError(401, 'authentication_required', '중앙 로그인이 필요합니다.');
   }
   let username;
+  let displayName;
   let email;
   let groups;
   try {
     username = normalizeUsername(rawUsername);
+    displayName = normalizeDisplayName(header(request, 'remote-name'));
     email = normalizeEmail(header(request, 'remote-email'));
     const rawGroups = header(request, 'remote-groups');
-    groups = normalizeRoles(rawGroups.split(','), {
+    groups = assignmentFromWireGroups(rawGroups.split(','), {
       status: 401,
       code: 'invalid_identity',
-      message: '중앙 로그인 역할을 확인할 수 없습니다.',
+      message: '중앙 로그인 역할과 앱 권한을 확인할 수 없습니다.',
     });
-    if (rawGroups !== groups.join(',')) throw invalidIdentity();
+    if (rawGroups !== groups.wireGroups.join(',')) throw invalidIdentity();
   } catch (error) {
     if (error instanceof AdminError && error.code === 'invalid_identity') throw error;
     throw invalidIdentity();
   }
-  if (username !== rawUsername || email !== header(request, 'remote-email')) {
+  if (
+    username !== rawUsername
+    || displayName !== header(request, 'remote-name')
+    || email !== header(request, 'remote-email')
+  ) {
     throw invalidIdentity();
-  }
-  const displayName = header(request, 'remote-name').trim();
-  if (displayName.length > 120 || /[\u0000-\u001f\u007f]/.test(displayName)) {
-    throw invalidIdentity();
-  }
-  if (!groups.includes(ADMIN_ROLE)) {
-    throw new AdminError(403, 'admin_required', '사용자 관리 권한이 없습니다.');
   }
   return {
     username,
     displayName,
     email,
-    groups,
+    groups: groups.groups,
+    role: groups.role,
+    applications: groups.role === CHIEF_ADMIN_ROLE
+      ? APPLICATIONS.map((application) => application.id)
+      : groups.applications,
   };
 }
 
-async function authorizedIdentity(request, store) {
+async function authorizedAdminIdentity(request, store) {
   const actor = identity(request);
   assertAuthorizedAdmin(await store.read(), actor);
+  return actor;
+}
+
+async function authorizedUserIdentity(request, store) {
+  const actor = identity(request);
+  assertAuthorizedUser(await store.read(), actor);
   return actor;
 }
 
@@ -122,7 +152,13 @@ function cookies(request) {
   for (const part of header(request, 'cookie').split(';')) {
     const separator = part.indexOf('=');
     if (separator < 1) continue;
-    parsed[part.slice(0, separator).trim()] = decodeURIComponent(part.slice(separator + 1).trim());
+    try {
+      parsed[part.slice(0, separator).trim()] = decodeURIComponent(
+        part.slice(separator + 1).trim(),
+      );
+    } catch {
+      // A malformed, attacker-controlled cookie can never satisfy CSRF.
+    }
   }
   return parsed;
 }
@@ -131,6 +167,78 @@ function secureEqual(left, right) {
   const leftBuffer = Buffer.from(left ?? '');
   const rightBuffer = Buffer.from(right ?? '');
   return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+class RollingWindowQuota {
+  constructor({ limit, windowMs, now, error, autoCleanup }) {
+    this.limit = limit;
+    this.windowMs = windowMs;
+    this.now = now;
+    this.error = error;
+    this.autoCleanup = autoCleanup;
+    this.events = new Map();
+    this.reservations = new Map();
+    this.cleanupTimer = undefined;
+  }
+
+  cleanup(timestamp) {
+    const threshold = timestamp - this.windowMs;
+    for (const [key, events] of this.events) {
+      const active = events.filter((eventTimestamp) => eventTimestamp > threshold);
+      if (active.length === 0) this.events.delete(key);
+      else if (active.length !== events.length) this.events.set(key, active);
+    }
+    if (this.events.size === 0 && this.cleanupTimer) {
+      clearTimeout(this.cleanupTimer);
+      this.cleanupTimer = undefined;
+    }
+  }
+
+  scheduleCleanup() {
+    if (!this.autoCleanup || this.cleanupTimer || this.events.size === 0) return;
+    let earliest = Number.POSITIVE_INFINITY;
+    for (const events of this.events.values()) {
+      for (const timestamp of events) earliest = Math.min(earliest, timestamp);
+    }
+    const delay = Math.max(1, earliest + this.windowMs - this.now());
+    this.cleanupTimer = setTimeout(() => {
+      this.cleanupTimer = undefined;
+      this.cleanup(this.now());
+      this.scheduleCleanup();
+    }, delay);
+    this.cleanupTimer.unref();
+  }
+
+  reserve(key) {
+    const timestamp = this.now();
+    this.cleanup(timestamp);
+    const events = this.events.get(key) ?? [];
+    const reservations = this.reservations.get(key) ?? new Set();
+    if (events.length + reservations.size >= this.limit) throw this.error();
+    const token = { key };
+    reservations.add(token);
+    this.reservations.set(key, reservations);
+    return token;
+  }
+
+  commit(token) {
+    const reservations = this.reservations.get(token.key);
+    if (!reservations?.delete(token)) throw new Error('Unknown quota reservation.');
+    if (reservations.size === 0) this.reservations.delete(token.key);
+    const timestamp = this.now();
+    this.cleanup(timestamp);
+    const events = this.events.get(token.key) ?? [];
+    events.push(timestamp);
+    this.events.set(token.key, events);
+    this.scheduleCleanup();
+  }
+
+  release(token) {
+    const reservations = this.reservations.get(token.key);
+    if (!reservations) return;
+    reservations.delete(token);
+    if (reservations.size === 0) this.reservations.delete(token.key);
+  }
 }
 
 export function loadEdgeSecret() {
@@ -187,7 +295,7 @@ export function validateEdgeSecret(secret) {
 function requiredRevision(request) {
   const revision = header(request, 'if-match');
   if (!/^[a-f0-9]{64}$/.test(revision)) {
-    throw new AdminError(428, 'revision_required', '사용자 목록을 새로고침한 뒤 다시 시도하세요.');
+    throw new AdminError(428, 'revision_required', '화면을 새로고침한 뒤 다시 시도하세요.');
   }
   return revision;
 }
@@ -198,15 +306,31 @@ export function requireTrustedEdge(request, expectedSecret = loadEdgeSecret()) {
   }
 }
 
-export function requireMutationProtection(request) {
+function requireCsrf(request, cookieName, message) {
   if (header(request, 'origin') !== origin) {
     throw new AdminError(403, 'invalid_origin', '요청 출처를 확인할 수 없습니다.');
   }
-  const cookie = cookies(request).bonifacio_admin_csrf;
+  const cookie = cookies(request)[cookieName];
   const token = header(request, 'x-csrf-token');
   if (!cookie || !token || !secureEqual(cookie, token)) {
-    throw new AdminError(403, 'invalid_csrf', '관리자 요청 검증에 실패했습니다. 새로고침 후 다시 시도하세요.');
+    throw new AdminError(403, 'invalid_csrf', message);
   }
+}
+
+export function requireMutationProtection(request) {
+  requireCsrf(
+    request,
+    ADMIN_CSRF_COOKIE,
+    '관리자 요청 검증에 실패했습니다. 새로고침 후 다시 시도하세요.',
+  );
+}
+
+export function requireUserMutationProtection(request) {
+  requireCsrf(
+    request,
+    USER_CSRF_COOKIE,
+    '내 정보 요청 검증에 실패했습니다. 새로고침 후 다시 시도하세요.',
+  );
 }
 
 async function jsonBody(request) {
@@ -254,72 +378,54 @@ async function serveStatic(response, filename) {
   response.end(body);
 }
 
-async function handleApi(request, response, url, dependencies) {
+async function handleAdminApi(request, response, url, dependencies) {
   requireTrustedEdge(request, dependencies.edgeSecret);
-  const actor = await authorizedIdentity(request, dependencies.store);
-  if (request.method === 'GET' && url.pathname === `${BASE}/api/session`) {
+  const actor = identity(request);
+  const authorized = await dependencies.store.readVersioned();
+  assertAuthorizedAdmin(authorized.database, actor);
+  if (request.method === 'GET' && url.pathname === `${ADMIN_BASE}/api/editor-access`) {
+    sendJson(response, 200, { canEditContent: true, subject: actor.username });
+    return;
+  }
+  if (request.method === 'GET' && url.pathname === `${ADMIN_BASE}/api/session`) {
     const csrfToken = randomBytes(32).toString('base64url');
     sendJson(
       response,
       200,
-      { actor, csrfToken },
       {
-        'Set-Cookie': `bonifacio_admin_csrf=${encodeURIComponent(csrfToken)}; Path=${BASE}/; Secure; HttpOnly; SameSite=Strict; Max-Age=3600`,
+        actor,
+        csrfToken,
+        authorization: {
+          roles: ROLE_NAMES,
+          applications: APPLICATIONS,
+          chiefAdminRole: CHIEF_ADMIN_ROLE,
+        },
+      },
+      {
+        'Set-Cookie': `${ADMIN_CSRF_COOKIE}=${encodeURIComponent(csrfToken)}; Path=${ADMIN_BASE}/; Secure; HttpOnly; SameSite=Strict; Max-Age=3600`,
       },
     );
     return;
   }
-  if (request.method === 'GET' && url.pathname === `${BASE}/api/users`) {
-    const current = await dependencies.store.readVersioned();
+  if (request.method === 'GET' && url.pathname === `${ADMIN_BASE}/api/users`) {
     sendJson(response, 200, {
-      users: publicUsers(current.database),
-      revision: current.revision,
+      users: publicUsers(authorized.database),
+      revision: authorized.revision,
     });
     return;
   }
 
   requireMutationProtection(request);
-  if (request.method === 'POST' && url.pathname === `${BASE}/api/account/password`) {
+  if (request.method === 'POST' && url.pathname === `${ADMIN_BASE}/api/users`) {
     const expectedRevision = requiredRevision(request);
     const body = await jsonBody(request);
-    requireExactBody(body, ['currentPassword', 'newPassword', 'confirmPassword']);
-    const currentPassword = normalizePassword(body.currentPassword, '현재 비밀번호', 1);
-    const newPassword = normalizePassword(body.newPassword);
-    const confirmPassword = normalizePassword(body.confirmPassword, '새 비밀번호 확인');
-    if (newPassword !== confirmPassword) {
-      throw new AdminError(400, 'password_confirmation_mismatch', '새 비밀번호 확인이 일치하지 않습니다.');
-    }
-    await dependencies.store.mutate({
-      actor: actor.username,
-      action: 'change_own_password',
-      target: actor.username,
-      expectedRevision,
-      transform: async (database) => {
-        assertAuthorizedAdmin(database, actor);
-        const current = database.users[actor.username];
-        if (!await dependencies.verifyCredential(currentPassword, current.password)) {
-          throw new AdminError(400, 'current_password_invalid', '현재 비밀번호가 맞지 않습니다.');
-        }
-        current.password = await dependencies.hashCredential(newPassword);
-      },
-    });
-    const current = await dependencies.store.readVersioned();
-    sendJson(response, 200, {
-      changed: true,
-      logoutUrl: `/sso/logout?rd=${encodeURIComponent(`${origin}${BASE}/`)}`,
-      revision: current.revision,
-    });
-    return;
-  }
-
-  if (request.method === 'POST' && url.pathname === `${BASE}/api/users`) {
-    const expectedRevision = requiredRevision(request);
-    const body = await jsonBody(request);
-    requireExactBody(body, ['username', 'displayName', 'email', 'roles']);
+    requireExactBody(body, ['username', 'displayName', 'email', 'role', 'applications']);
     const username = normalizeUsername(body.username);
     const email = normalizeEmail(body.email);
     const displayName = normalizeDisplayName(body.displayName);
-    const roles = normalizeRoles(body.roles);
+    const role = normalizeRole(body.role);
+    const applications = normalizeApplications(body.applications, role);
+    const groups = groupsForAssignment(role, applications);
     let credential;
     await dependencies.store.mutate({
       actor: actor.username,
@@ -328,6 +434,7 @@ async function handleApi(request, response, url, dependencies) {
       expectedRevision,
       transform: async (database) => {
         assertAuthorizedAdmin(database, actor);
+        assertAdminMayCreate(database, actor, role);
         if (database.users[username]) throw new AdminError(409, 'username_exists', '이미 사용 중인 아이디입니다.');
         if (Object.values(database.users).some((user) => user.email === email)) {
           throw new AdminError(409, 'email_exists', '이미 사용 중인 이메일입니다.');
@@ -338,7 +445,7 @@ async function handleApi(request, response, url, dependencies) {
           displayname: displayName,
           password: credential.digest,
           email,
-          groups: roles,
+          groups,
         };
       },
     });
@@ -352,14 +459,18 @@ async function handleApi(request, response, url, dependencies) {
     return;
   }
 
-  const userMatch = url.pathname.match(new RegExp(`^${BASE}/api/users/([a-z0-9][a-z0-9_-]{0,63})$`));
+  const userMatch = url.pathname.match(
+    new RegExp(`^${ADMIN_BASE}/api/users/([a-z0-9][a-z0-9_-]{0,63})$`),
+  );
   if (request.method === 'PATCH' && userMatch) {
     const expectedRevision = requiredRevision(request);
     const username = userMatch[1];
     const body = await jsonBody(request);
-    requireExactBody(body, ['displayName', 'roles', 'disabled']);
+    requireExactBody(body, ['displayName', 'role', 'applications', 'disabled']);
     const displayName = normalizeDisplayName(body.displayName);
-    const roles = normalizeRoles(body.roles);
+    const role = normalizeRole(body.role);
+    const applications = normalizeApplications(body.applications, role);
+    const groups = groupsForAssignment(role, applications);
     const disabled = requireBoolean(body.disabled, '로그인 비활성화');
     await dependencies.store.mutate({
       actor: actor.username,
@@ -374,9 +485,9 @@ async function handleApi(request, response, url, dependencies) {
           ...current,
           displayname: displayName,
           disabled,
-          groups: roles,
+          groups,
         };
-        assertAdminMutationAllowed(database, actor.username, username, next);
+        assertAdminMutationAllowed(database, actor, username, next);
         database.users[username] = next;
       },
     });
@@ -389,12 +500,23 @@ async function handleApi(request, response, url, dependencies) {
   }
 
   const resetMatch = url.pathname.match(
-    new RegExp(`^${BASE}/api/users/([a-z0-9][a-z0-9_-]{0,63})/reset-password$`),
+    new RegExp(`^${ADMIN_BASE}/api/users/([a-z0-9][a-z0-9_-]{0,63})/reset-password$`),
   );
   if (request.method === 'POST' && resetMatch) {
     const expectedRevision = requiredRevision(request);
     const username = resetMatch[1];
-    let credential;
+    assertAdminMayResetPassword(authorized.database, actor, username);
+    const body = await jsonBody(request);
+    requireExactBody(body, ['newPassword', 'confirmPassword']);
+    const newPassword = normalizeChosenPassword(body.newPassword);
+    const confirmPassword = normalizeChosenPassword(body.confirmPassword, '새 비밀번호 확인');
+    if (newPassword !== confirmPassword) {
+      throw new AdminError(
+        400,
+        'password_confirmation_mismatch',
+        '새 비밀번호 확인이 일치하지 않습니다.',
+      );
+    }
     await dependencies.store.mutate({
       actor: actor.username,
       action: 'reset_password',
@@ -402,16 +524,13 @@ async function handleApi(request, response, url, dependencies) {
       expectedRevision,
       transform: async (database) => {
         assertAuthorizedAdmin(database, actor);
+        assertAdminMayResetPassword(database, actor, username);
         const user = database.users[username];
-        if (!user) throw new AdminError(404, 'user_not_found', '사용자를 찾을 수 없습니다.');
-        credential = await dependencies.generateCredential();
-        user.password = credential.digest;
+        user.password = await dependencies.hashCredential(newPassword);
       },
     });
-    if (!credential) throw new AdminError(500, 'hash_failed', '임시 비밀번호를 만들 수 없습니다.');
     const current = await dependencies.store.readVersioned();
     sendJson(response, 200, {
-      temporaryPassword: credential.password,
       revision: current.revision,
     });
     return;
@@ -420,54 +539,253 @@ async function handleApi(request, response, url, dependencies) {
   throw new AdminError(404, 'not_found', '관리자 API 경로를 찾을 수 없습니다.');
 }
 
+async function handleUserApi(request, response, url, dependencies) {
+  requireTrustedEdge(request, dependencies.edgeSecret);
+  const actor = identity(request);
+
+  if (request.method === 'GET' && url.pathname === `${USER_BASE}/api/session`) {
+    const current = await dependencies.store.readVersioned();
+    assertAuthorizedUser(current.database, actor);
+    const csrfToken = randomBytes(32).toString('base64url');
+    const {
+      disabled: _disabled,
+      ...profile
+    } = publicUser(current.database, actor.username);
+    sendJson(
+      response,
+      200,
+      {
+        profile,
+        revision: current.revision,
+        csrfToken,
+        applications: APPLICATIONS.map(({ id, label }) => ({ id, label })),
+        canManageUsers: current.database.users[actor.username].groups.includes(ADMIN_ROLE),
+      },
+      {
+        'Set-Cookie': `${USER_CSRF_COOKIE}=${encodeURIComponent(csrfToken)}; Path=${USER_BASE}/; Secure; HttpOnly; SameSite=Strict; Max-Age=3600`,
+      },
+    );
+    return;
+  }
+
+  const authorized = await dependencies.store.readVersioned();
+  assertAuthorizedUser(authorized.database, actor);
+  if (url.pathname === `${USER_BASE}/api/applications`) {
+    if (request.method === 'GET') {
+      const onlyApp = actor.role !== CHIEF_ADMIN_ROLE && actor.applications.length === 1
+        ? APPLICATIONS.find(({ id }) => id === actor.applications[0]) : null;
+      sendJson(response, 200, {
+        ...readCatalog(), canManage: actor.username === 'cks',
+        redirect: onlyApp ? onlyApp.href ?? `/${onlyApp.id}/` : null,
+      });
+      return;
+    }
+    if (request.method === 'POST') {
+      requireUserMutationProtection(request);
+      const revision = requiredRevision(request);
+      const body = await jsonBody(request);
+      requireExactBody(body, ['id', 'title', 'href', 'description']);
+      normalizeEntry(body);
+      const lock = await dependencies.store.acquireLock();
+      try {
+        assertAuthorizedUser(await dependencies.store.read(), actor);
+        if (actor.username !== 'cks') throw new AdminError(403, 'forbidden', 'cks 계정만 앱을 등록할 수 있습니다.');
+        await dependencies.store.appendAudit({ at: new Date().toISOString(), actor: actor.username, action: 'add_application', phase: 'prepared', target: body.id });
+        const result = await saveCatalogEntry(body, revision);
+        refreshApplications();
+        await dependencies.store.appendAudit({ at: new Date().toISOString(), actor: actor.username, action: 'add_application', phase: 'committed', target: body.id })
+          .catch(() => console.error('Catalog post-commit audit warning'));
+        sendJson(response, 201, { ...result, canManage: true });
+      } finally { await dependencies.store.releaseLock(lock); }
+      return;
+    }
+  }
+  if (request.method === 'POST' && url.pathname === `${USER_BASE}/api/account/password`) {
+    requireUserMutationProtection(request);
+    const expectedRevision = requiredRevision(request);
+    if (expectedRevision !== authorized.revision) {
+      throw new AdminError(
+        409,
+        'stale_revision',
+        '사용자 정보가 변경됐습니다. 새로고침 후 다시 시도하세요.',
+      );
+    }
+    const body = await jsonBody(request);
+    requireExactBody(body, ['currentPassword', 'newPassword', 'confirmPassword']);
+    const currentPassword = normalizePassword(body.currentPassword, '현재 비밀번호', 1);
+    const newPassword = normalizeChosenPassword(body.newPassword);
+    const confirmPassword = normalizeChosenPassword(body.confirmPassword, '새 비밀번호 확인');
+    if (newPassword !== confirmPassword) {
+      throw new AdminError(
+        400,
+        'password_confirmation_mismatch',
+        '새 비밀번호 확인이 일치하지 않습니다.',
+      );
+    }
+    if (currentPassword === newPassword) {
+      throw new AdminError(
+        400,
+        'password_unchanged',
+        '새 비밀번호는 현재 비밀번호와 달라야 합니다.',
+      );
+    }
+
+    let attemptReservation;
+    let changeReservation;
+    try {
+      changeReservation = dependencies.passwordChangeQuota.reserve(actor.username);
+      attemptReservation = dependencies.passwordAttemptQuota.reserve(actor.username);
+      await dependencies.store.mutate({
+        actor: actor.username,
+        action: 'change_own_password',
+        target: actor.username,
+        expectedRevision,
+        transform: async (database) => {
+          assertAuthorizedUser(database, actor);
+          dependencies.passwordAttemptQuota.commit(attemptReservation);
+          attemptReservation = undefined;
+          const current = database.users[actor.username];
+          if (!await dependencies.verifyCredential(currentPassword, current.password)) {
+            throw new AdminError(
+              400,
+              'current_password_invalid',
+              '현재 비밀번호가 맞지 않습니다.',
+            );
+          }
+          current.password = await dependencies.hashCredential(newPassword);
+        },
+      });
+      dependencies.passwordChangeQuota.commit(changeReservation);
+      changeReservation = undefined;
+    } finally {
+      if (attemptReservation) dependencies.passwordAttemptQuota.release(attemptReservation);
+      if (changeReservation) dependencies.passwordChangeQuota.release(changeReservation);
+    }
+    const current = await dependencies.store.readVersioned();
+    sendJson(response, 200, {
+      changed: true,
+      logoutUrl: `/sso/logout?rd=${encodeURIComponent(`${origin}${USER_BASE}/`)}`,
+      revision: current.revision,
+    });
+    return;
+  }
+
+  throw new AdminError(404, 'not_found', '내 정보 API 경로를 찾을 수 없습니다.');
+}
+
 export function createHandler({
   store = defaultStore,
   generateCredential = generateTemporaryCredential,
   hashCredential = hashPassword,
   verifyCredential = verifyPassword,
   edgeSecret,
+  limiterNow = Date.now,
 } = {}) {
+  const passwordAttemptQuota = new RollingWindowQuota({
+    limit: PASSWORD_ATTEMPT_LIMIT,
+    windowMs: PASSWORD_ATTEMPT_WINDOW_MS,
+    now: limiterNow,
+    autoCleanup: limiterNow === Date.now,
+    error: () => new AdminError(
+      429,
+      'password_attempt_rate_limited',
+      '비밀번호 확인 시도가 너무 많습니다. 10분 후 다시 시도하세요.',
+    ),
+  });
+  const passwordChangeQuota = new RollingWindowQuota({
+    limit: PASSWORD_CHANGE_LIMIT,
+    windowMs: PASSWORD_CHANGE_WINDOW_MS,
+    now: limiterNow,
+    autoCleanup: limiterNow === Date.now,
+    error: () => new AdminError(
+      429,
+      'password_change_rate_limited',
+      '최근 24시간에 비밀번호를 3회 변경했습니다. 나중에 다시 시도하세요.',
+    ),
+  });
   return async function handler(request, response) {
     try {
       const url = new URL(request.url ?? '/', origin);
       const trustedEdgeSecret = edgeSecret ?? loadEdgeSecret();
+      if (url.pathname === '/internal/catalog/authz') {
+        requireTrustedEdge(request, trustedEdgeSecret);
+        await catalogAuthorize(request, response, { store, identity });
+        return;
+      }
       if (request.method === 'GET' && url.pathname === '/healthz') {
         await store.read();
         await access(process.env.SSO_AUTHELIA_BINARY ?? '/usr/local/bin/authelia', fileConstants.X_OK);
         sendJson(response, 200, { ok: true });
         return;
       }
-      if (url.pathname.startsWith(`${BASE}/api/`)) {
-        await handleApi(request, response, url, {
-          store,
-          generateCredential,
-          hashCredential,
-          verifyCredential,
-          edgeSecret: trustedEdgeSecret,
-        });
+      const dependencies = {
+        store,
+        generateCredential,
+        hashCredential,
+        verifyCredential,
+        edgeSecret: trustedEdgeSecret,
+        passwordAttemptQuota,
+        passwordChangeQuota,
+      };
+      if (url.pathname.startsWith(`${ADMIN_BASE}/api/`)) {
+        await handleAdminApi(request, response, url, dependencies);
+        return;
+      }
+      if (url.pathname.startsWith(`${USER_BASE}/api/`)) {
+        await handleUserApi(request, response, url, dependencies);
         return;
       }
       requireTrustedEdge(request, trustedEdgeSecret);
-      await authorizedIdentity(request, store);
-      if (request.method === 'GET' && (url.pathname === `${BASE}/` || url.pathname === `${BASE}/index.html`)) {
-        await serveStatic(response, 'index.html');
-        return;
+      if (url.pathname.startsWith(`${ADMIN_BASE}/`)) {
+        await authorizedAdminIdentity(request, store);
+        if (
+          request.method === 'GET'
+          && (url.pathname === `${ADMIN_BASE}/` || url.pathname === `${ADMIN_BASE}/index.html`)
+        ) {
+          await serveStatic(response, 'index.html');
+          return;
+        }
+        if (request.method === 'GET' && url.pathname === `${ADMIN_BASE}/admin.js`) {
+          await serveStatic(response, 'admin.js');
+          return;
+        }
+        if (request.method === 'GET' && url.pathname === `${ADMIN_BASE}/ui-model.js`) {
+          await serveStatic(response, 'ui-model.js');
+          return;
+        }
+        if (request.method === 'GET' && url.pathname === `${ADMIN_BASE}/admin.css`) {
+          await serveStatic(response, 'admin.css');
+          return;
+        }
+        throw new AdminError(404, 'not_found', '관리자 페이지를 찾을 수 없습니다.');
       }
-      if (request.method === 'GET' && url.pathname === `${BASE}/admin.js`) {
-        await serveStatic(response, 'admin.js');
-        return;
-      }
-      if (request.method === 'GET' && url.pathname === `${BASE}/admin.css`) {
-        await serveStatic(response, 'admin.css');
-        return;
+      if (url.pathname.startsWith(`${USER_BASE}/`)) {
+        await authorizedUserIdentity(request, store);
+        if (
+          request.method === 'GET'
+          && (url.pathname === `${USER_BASE}/` || url.pathname === `${USER_BASE}/user.html`)
+        ) {
+          await serveStatic(response, 'user.html');
+          return;
+        }
+        if (request.method === 'GET' && url.pathname === `${USER_BASE}/user.js`) {
+          await serveStatic(response, 'user.js');
+          return;
+        }
+        if (request.method === 'GET' && url.pathname === `${USER_BASE}/user.css`) {
+          await serveStatic(response, 'user.css');
+          return;
+        }
+        throw new AdminError(404, 'not_found', '내 정보 페이지를 찾을 수 없습니다.');
       }
       throw new AdminError(404, 'not_found', '페이지를 찾을 수 없습니다.');
     } catch (error) {
-      const status = error instanceof AdminError ? error.status : 500;
-      const code = error instanceof AdminError ? error.code : 'internal_error';
-      const message = error instanceof AdminError ? error.message : '관리자 서비스에서 오류가 발생했습니다.';
+      const expected = error instanceof AdminError || error instanceof CatalogError;
+      const status = expected ? error.status : 500;
+      const code = expected ? error.code : 'internal_error';
+      const message = expected ? error.message : 'SSO 계정 서비스에서 오류가 발생했습니다.';
       sendJson(response, status, { error: code, message });
-      if (!(error instanceof AdminError)) console.error(error);
+      if (!expected) console.error(error);
     }
   };
 }

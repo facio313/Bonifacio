@@ -10,7 +10,7 @@ import { RoleMigrationError, migrateRoleContract } from './migrate-role-contract
 
 const digest = '$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$ZGlnZXN0';
 
-function legacySource({ email = 'cks@bonifacio.work', groups = ['owners', 'users'], extra = '' } = {}) {
+function legacySource({ email = 'cks@bonifacio.work', groups = ['user', 'developer', 'admin'], extra = '' } = {}) {
   const groupLines = groups.map((group) => `      - ${group}\n`).join('');
   return `---
 users:
@@ -21,6 +21,17 @@ users:
     email: ${email}
     groups:
 ${groupLines}${extra}`;
+}
+
+function additionalUser(username, groups, { disabled = false } = {}) {
+  const groupLines = groups.map((group) => `      - ${group}\n`).join('');
+  return `  ${username}:
+    disabled: ${disabled}
+    displayname: ${username}
+    password: "${digest}"
+    email: ${username}@bonifacio.work
+    groups:
+${groupLines}`;
 }
 
 function revision(source) {
@@ -54,7 +65,14 @@ test('role migration defaults to a write-free dry run', async () => {
 });
 
 test('role migration preserves the opaque credential and commits atomically with audit', async () => {
-  const value = await fixture();
+  const source = legacySource({
+    extra: [
+      additionalUser('ordinary', ['user']),
+      additionalUser('former_developer', ['user', 'developer']),
+      additionalUser('delegated_admin', ['user', 'developer', 'admin'], { disabled: true }),
+    ].join(''),
+  });
+  const value = await fixture(source);
   try {
     const result = await migrateRoleContract({
       path: value.path,
@@ -64,7 +82,47 @@ test('role migration preserves the opaque credential and commits atomically with
     assert.equal(result.applied, true);
     assert.equal((await stat(value.path)).mode & 0o777, 0o600);
     const migrated = await new UserStore(value.path).read();
-    assert.deepEqual(migrated.users.cks.groups, ['user', 'developer', 'admin']);
+    assert.deepEqual(migrated.users.cks.groups, ['user', 'admin', 'chief-admin', 'portfolio-v2']);
+    assert.deepEqual(migrated.users.ordinary.groups, [
+      'user',
+      'portfolio-v2',
+      'access-react',
+      'access-vue',
+      'access-dukkeobi',
+      'access-ddit-finalproject',
+      'access-pilgrimage',
+      'access-multtara',
+      'access-feelmyrythm',
+      'access-garak',
+    ]);
+    assert.deepEqual(migrated.users.former_developer.groups, [
+      'user',
+      'portfolio-v2',
+      'access-react',
+      'access-vue',
+      'access-dukkeobi',
+      'access-ddit-finalproject',
+      'access-monitor',
+      'access-pilgrimage',
+      'access-multtara',
+      'access-feelmyrythm',
+      'access-garak',
+    ]);
+    assert.deepEqual(migrated.users.delegated_admin.groups, [
+      'user',
+      'admin',
+      'portfolio-v2',
+      'access-react',
+      'access-vue',
+      'access-dukkeobi',
+      'access-ddit-finalproject',
+      'access-monitor',
+      'access-pilgrimage',
+      'access-multtara',
+      'access-feelmyrythm',
+      'access-garak',
+    ]);
+    assert.equal(migrated.users.delegated_admin.disabled, true);
     assert.equal(migrated.users.cks.password, digest);
     assert.equal(migrated.users.cks.email, 'cks@bonifacio.work');
 
@@ -75,7 +133,7 @@ test('role migration preserves the opaque credential and commits atomically with
     assert.equal((await stat(backupPath)).mode & 0o777, 0o600);
 
     const audit = await readFile(join(value.state, 'audit.jsonl'), 'utf8');
-    assert.match(audit, /"action":"migrate_role_contract_v1"/);
+    assert.match(audit, /"action":"migrate_role_and_access_contract_v2"/);
     assert.match(audit, /"phase":"prepared"/);
     assert.match(audit, /"phase":"committed"/);
     assert.equal(audit.includes(digest), false);
@@ -89,18 +147,10 @@ test('role migration preserves the opaque credential and commits atomically with
 test('role migration rejects stale revisions and any identity or legacy-role drift', async () => {
   for (const [source, expectedCode] of [
     [legacySource({ email: 'other@bonifacio.work' }), 'unexpected_legacy_record'],
-    [legacySource({ groups: ['users'] }), 'unexpected_legacy_record'],
+    [legacySource({ groups: ['user', 'admin'] }), 'unexpected_legacy_record'],
     [
-      `${legacySource()}  another:
-    disabled: false
-    displayname: Another
-    password: "${digest}"
-    email: another@bonifacio.work
-    groups:
-      - owners
-      - users
-`,
-      'unexpected_identity_set',
+      legacySource({ extra: additionalUser('unexpected', ['user', 'admin']) }),
+      'unexpected_legacy_record',
     ],
   ]) {
     const value = await fixture(source);

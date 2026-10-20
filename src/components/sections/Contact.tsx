@@ -1,13 +1,83 @@
 /* 04 — CONTACT section */
 import { Reveal, Arrow } from '../atoms'
 import { SectionRail } from '../Nav'
+import { EditableLink, EditableText, useEditableValue } from '../ContentEditor'
+
+const externalHref = (value: string, fallbackHost?: string) => {
+  const trimmed = value.trim()
+  if (!trimmed) return '#'
+  if (trimmed === '#') return '#'
+  if (trimmed.startsWith('/')) return trimmed
+
+  const candidate = /^https?:\/\//i.test(trimmed)
+    ? trimmed
+    : trimmed.includes('.')
+      ? `https://${trimmed.replace(/^\/+/, '')}`
+      : fallbackHost
+        ? `https://${fallbackHost}/${trimmed.replace(/^[@/]+/, '')}`
+        : ''
+
+  if (!candidate) return '#'
+  try {
+    const url = new URL(candidate)
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : '#'
+  } catch {
+    return '#'
+  }
+}
 
 export const Contact = () => {
+  const email = useEditableValue('contact.email', 'cks@bonifacio.work')
+  const githubHref = useEditableValue('contact.links.github.href', 'https://github.com/facio313')
+  const linkedInHref = useEditableValue('contact.links.linkedin.href', '#')
+  const resumeHref = useEditableValue('contact.links.resume.href', '#')
+  const emailHref = `mailto:${email.trim().replace(/^mailto:/i, '')}`
+
   const links = [
-    { k: 'Email', v: 'cks@bonifacio.work', href: 'mailto:cks@bonifacio.work' },
-    { k: 'GitHub', v: 'github.com/facio313', href: 'https://github.com/facio313' },
-    { k: 'LinkedIn', v: 'in/choikyungsoo', href: '#' },
-    { k: 'Resume', v: 'PDF · 2026', href: '#' },
+    {
+      id: 'email',
+      labelKey: 'contact.links.email.label',
+      defaultLabel: 'Email',
+      valueKey: 'contact.email',
+      defaultValue: 'cks@bonifacio.work',
+      href: emailHref,
+      hrefKey: null,
+      defaultHref: null,
+      fallbackHost: null,
+    },
+    {
+      id: 'github',
+      labelKey: 'contact.links.github.label',
+      defaultLabel: 'GitHub',
+      valueKey: 'contact.links.github.value',
+      defaultValue: 'github.com/facio313',
+      href: externalHref(githubHref, 'github.com'),
+      hrefKey: 'contact.links.github.href',
+      defaultHref: 'https://github.com/facio313',
+      fallbackHost: 'github.com',
+    },
+    {
+      id: 'linkedin',
+      labelKey: 'contact.links.linkedin.label',
+      defaultLabel: 'LinkedIn',
+      valueKey: 'contact.links.linkedin.value',
+      defaultValue: 'in/choikyungsoo',
+      href: externalHref(linkedInHref, 'www.linkedin.com/in'),
+      hrefKey: 'contact.links.linkedin.href',
+      defaultHref: '#',
+      fallbackHost: 'www.linkedin.com/in',
+    },
+    {
+      id: 'resume',
+      labelKey: 'contact.links.resume.label',
+      defaultLabel: 'Resume',
+      valueKey: 'contact.links.resume.value',
+      defaultValue: 'PDF · 2026',
+      href: externalHref(resumeHref),
+      hrefKey: 'contact.links.resume.href',
+      defaultHref: '#',
+      fallbackHost: null,
+    },
   ]
 
   return (
@@ -34,7 +104,12 @@ export const Contact = () => {
           }}
         >
           <span style={{ width: 32, height: 1, background: 'var(--bg)', display: 'inline-block' }} />
-          04 / Contact
+          <EditableText
+            contentKey="contact.kicker"
+            label="연락처 섹션 표제"
+            defaultValue="04 / Contact"
+            as="span"
+          />
         </div>
       </Reveal>
 
@@ -52,9 +127,29 @@ export const Contact = () => {
             maxWidth: 1200,
           }}
         >
-          함께 만들고 싶은 것이 있다면<span style={{ color: 'var(--accent)' }}>,</span>
+          <EditableText
+            contentKey="contact.headline.line1"
+            label="연락처 제목 첫째 줄"
+            defaultValue="함께 만들고 싶은 것이 있다면"
+            as="span"
+            render={(value) => (
+              <>
+                {value}<span style={{ color: 'var(--accent)' }}>,</span>
+              </>
+            )}
+          />
           <br />
-          편하게 연락 주세요<span style={{ color: 'var(--accent)' }}>.</span>
+          <EditableText
+            contentKey="contact.headline.line2"
+            label="연락처 제목 둘째 줄"
+            defaultValue="편하게 연락 주세요"
+            as="span"
+            render={(value) => (
+              <>
+                {value}<span style={{ color: 'var(--accent)' }}>.</span>
+              </>
+            )}
+          />
         </h2>
       </Reveal>
 
@@ -69,8 +164,8 @@ export const Contact = () => {
             alignItems: 'flex-end',
           }}
         >
-          <a
-            href="mailto:cks@bonifacio.work"
+          <EditableLink
+            href={emailHref}
             className="cta"
             style={{
               display: 'inline-flex',
@@ -94,9 +189,14 @@ export const Contact = () => {
               e.currentTarget.style.transform = 'translateY(0)'
             }}
           >
-            cks@bonifacio.work
+            <EditableText
+              contentKey="contact.email"
+              label="이메일"
+              defaultValue="cks@bonifacio.work"
+              as="span"
+            />
             <Arrow rotate={-45} size={16} />
-          </a>
+          </EditableLink>
 
           <ul
             style={{
@@ -109,10 +209,11 @@ export const Contact = () => {
             }}
           >
             {links.map((row) => (
-              <li key={row.k}>
-                <a
+              <li key={row.id}>
+                <EditableLink
                   href={row.href}
                   className="dark-row"
+                  editingAs="div"
                   style={{
                     display: 'grid',
                     gridTemplateColumns: '96px 1fr auto',
@@ -133,13 +234,43 @@ export const Contact = () => {
                       textTransform: 'uppercase',
                     }}
                   >
-                    {row.k}
+                    <EditableText
+                      contentKey={row.labelKey}
+                      label={`${row.defaultLabel} 링크 이름`}
+                      defaultValue={row.defaultLabel}
+                      as="span"
+                    />
                   </span>
-                  <span style={{ fontSize: 16, letterSpacing: '-0.01em' }}>{row.v}</span>
+                  <span style={{ fontSize: 16, letterSpacing: '-0.01em' }}>
+                    <EditableText
+                      contentKey={row.valueKey}
+                      label={`${row.defaultLabel} 링크 표시값`}
+                      defaultValue={row.defaultValue}
+                      as="span"
+                    />
+                  </span>
                   <span className="dark-arrow" style={{ color: 'rgba(255,255,255,0.5)' }}>
-                    <Arrow rotate={-45} />
+                    {row.hrefKey && row.defaultHref !== null ? (
+                      <EditableText
+                        contentKey={row.hrefKey}
+                        label={`${row.defaultLabel} 링크 주소`}
+                        defaultValue={row.defaultHref}
+                        render={() => <Arrow rotate={-45} />}
+                        validate={(value) => {
+                          const trimmed = value.trim()
+                          if (!trimmed) return '링크 주소를 입력하거나 비활성 상태를 뜻하는 #을 입력해 주세요.'
+                          if (trimmed === '#') return null
+                          if (/\s/.test(trimmed) || externalHref(trimmed, row.fallbackHost ?? undefined) === '#') {
+                            return 'https:// 주소, /로 시작하는 경로, 또는 올바른 프로필 주소를 입력해 주세요.'
+                          }
+                          return null
+                        }}
+                      />
+                    ) : (
+                      <Arrow rotate={-45} />
+                    )}
                   </span>
-                </a>
+                </EditableLink>
               </li>
             ))}
           </ul>
@@ -165,9 +296,24 @@ export const Contact = () => {
             gap: 16,
           }}
         >
-          <span>© 2026 Choi Kyungsoo</span>
-          <span>Seoul, Republic of Korea</span>
-          <span>Set in Pretendard</span>
+          <EditableText
+            contentKey="contact.footer.copyright"
+            label="저작권 문구"
+            defaultValue="© 2026 Choi Kyungsoo"
+            as="span"
+          />
+          <EditableText
+            contentKey="contact.footer.location"
+            label="푸터 위치"
+            defaultValue="Seoul, Republic of Korea"
+            as="span"
+          />
+          <EditableText
+            contentKey="contact.footer.typeface"
+            label="서체 문구"
+            defaultValue="Set in Pretendard"
+            as="span"
+          />
         </div>
       </Reveal>
 

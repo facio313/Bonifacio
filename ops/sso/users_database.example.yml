@@ -7,5 +7,6 @@ users:
     email: cks@bonifacio.work
     groups:
       - user
-      - developer
       - admin
+      - chief-admin
+      - portfolio-v2

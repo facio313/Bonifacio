@@ -4,8 +4,10 @@ import { Reveal, Arrow, useReveal } from '../atoms'
 import { SectionRail, BigNumber } from '../Nav'
 import { CardVisual } from '../CardVisual'
 import { apps } from '../../apps.config'
+import { AddApplication, useApplicationCatalog } from '../ApplicationCatalog'
 import type { App, AppStatus } from '../../types/app'
 import { ACCENT } from '../../site'
+import { EditableText, useContentEditMode, useEditableValue } from '../ContentEditor'
 
 interface WorkCard {
   id: string
@@ -26,6 +28,7 @@ const fromApp = (app: App, num: string): WorkCard => ({
   id: app.id,
   num,
   name: app.title,
+  kind: app.id,
   tag: app.tags[0] ?? 'App',
   desc: app.description,
   stack: app.tags,
@@ -38,7 +41,7 @@ const fromApp = (app: App, num: string): WorkCard => ({
 // Pilgrimage is the real app that headlines the grid as the hero card.
 const HERO_APP_ID = 'pilgrimage'
 
-const buildCards = (): WorkCard[] => {
+const buildCards = (apps: App[]): WorkCard[] => {
   const heroApp = apps.find((a) => a.id === HERO_APP_ID)
   const otherApps = apps.filter((a) => a.id !== HERO_APP_ID)
 
@@ -56,12 +59,20 @@ const statusBadge = (s: AppStatus) => {
   return { label: 'In progress', dot: 'var(--muted)', color: 'var(--muted)' }
 }
 
+const tagContentKey = (cardId: string, tag: string) =>
+  `works.app.${cardId}.tags.${encodeURIComponent(tag.toLowerCase())}`
+
 const ProjectCard = ({ card, accent }: { card: WorkCard; accent: string }) => {
   const [hover, setHover] = useState(false)
   const ref = useReveal()
+  const editMode = useContentEditMode()
   const s = statusBadge(card.status)
   const isHero = card.span === 'hero'
   const isWide = card.span === 'wide'
+  const isEditable = card.id !== 'wgang'
+  const titleKey = `works.app.${card.id}.title`
+  const descriptionKey = `works.app.${card.id}.description`
+  const editedTitle = useEditableValue(titleKey, card.name)
   const minH = isHero ? 640 : 400
 
   const cardStyle = {
@@ -107,6 +118,7 @@ const ProjectCard = ({ card, accent }: { card: WorkCard; accent: string }) => {
         }}
       >
         <div
+          aria-hidden="true"
           style={{
             position: 'absolute',
             inset: 0,
@@ -114,7 +126,11 @@ const ProjectCard = ({ card, accent }: { card: WorkCard; accent: string }) => {
             transition: 'transform 1.2s cubic-bezier(0.2,0.7,0.2,1)',
           }}
         >
-          <CardVisual kind={card.kind} accent={accent} fallback={card.fallback} />
+          <CardVisual
+            kind={card.kind}
+            accent={card.fallback?.color || accent}
+            fallback={card.fallback ? { ...card.fallback, label: isEditable ? editedTitle : card.fallback.label } : undefined}
+          />
         </div>
         {/* accent sweep on hover */}
         <div
@@ -147,7 +163,7 @@ const ProjectCard = ({ card, accent }: { card: WorkCard; accent: string }) => {
               fontWeight: 500,
             }}
           >
-            Featured
+            <EditableText contentKey="works.featured" label="대표 작업 배지" defaultValue="Featured" />
           </div>
         )}
       </div>
@@ -175,7 +191,16 @@ const ProjectCard = ({ card, accent }: { card: WorkCard; accent: string }) => {
           }}
         >
           <span>
-            {card.num} · {card.tag}
+            {card.num} ·{' '}
+            {isEditable ? (
+              <EditableText
+                contentKey={tagContentKey(card.id, card.tag)}
+                label={`${card.name} 대표 기술`}
+                defaultValue={card.tag}
+              />
+            ) : (
+              card.tag
+            )}
           </span>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: s.color }}>
             <span
@@ -187,7 +212,15 @@ const ProjectCard = ({ card, accent }: { card: WorkCard; accent: string }) => {
                 animation: card.status === 'live' ? 'pulseDot 2s ease-out infinite' : 'none',
               }}
             />
-            {s.label}
+            {isEditable ? (
+              <EditableText
+                contentKey={`works.app.${card.id}.statusLabel`}
+                label={`${card.name} 상태 문구`}
+                defaultValue={s.label}
+              />
+            ) : (
+              s.label
+            )}
           </span>
         </div>
 
@@ -203,7 +236,11 @@ const ProjectCard = ({ card, accent }: { card: WorkCard; accent: string }) => {
               lineHeight: 1,
             }}
           >
-            {card.name}
+            {isEditable ? (
+              <EditableText contentKey={titleKey} label={`${card.name} 프로젝트명`} defaultValue={card.name} />
+            ) : (
+              card.name
+            )}
           </h3>
         </div>
 
@@ -218,7 +255,16 @@ const ProjectCard = ({ card, accent }: { card: WorkCard; accent: string }) => {
             wordBreak: 'keep-all',
           }}
         >
-          {card.desc}
+          {isEditable ? (
+            <EditableText
+              contentKey={descriptionKey}
+              label={`${card.name} 프로젝트 설명`}
+              defaultValue={card.desc}
+              multiline
+            />
+          ) : (
+            card.desc
+          )}
         </p>
 
         <div style={{ flex: 1 }} />
@@ -233,9 +279,9 @@ const ProjectCard = ({ card, accent }: { card: WorkCard; accent: string }) => {
           }}
         >
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {card.stack.map((t) => (
+            {card.stack.map((t, index) => (
               <span
-                key={t}
+                key={`${t}-${index}`}
                 style={{
                   fontFamily: 'var(--font-mono)',
                   fontSize: 10.5,
@@ -246,7 +292,15 @@ const ProjectCard = ({ card, accent }: { card: WorkCard; accent: string }) => {
                   letterSpacing: '0.04em',
                 }}
               >
-                {t}
+                {isEditable ? (
+                  <EditableText
+                    contentKey={tagContentKey(card.id, t)}
+                    label={`${card.name} 기술 ${index + 1}`}
+                    defaultValue={t}
+                  />
+                ) : (
+                  t
+                )}
               </span>
             ))}
           </div>
@@ -264,7 +318,17 @@ const ProjectCard = ({ card, accent }: { card: WorkCard; accent: string }) => {
               transition: 'color 0.3s',
             }}
           >
-            {card.status === 'wip' ? 'Coming soon' : 'Open'}
+            {isEditable ? (
+              <EditableText
+                contentKey={`works.app.${card.id}.actionLabel`}
+                label={`${card.name} 열기 문구`}
+                defaultValue={card.status === 'wip' ? 'Coming soon' : 'Open'}
+              />
+            ) : card.status === 'wip' ? (
+              'Coming soon'
+            ) : (
+              'Open'
+            )}
             <span
               style={{
                 display: 'inline-block',
@@ -285,6 +349,19 @@ const ProjectCard = ({ card, accent }: { card: WorkCard; accent: string }) => {
     onMouseLeave: () => setHover(false),
   }
 
+  if (editMode) {
+    return (
+      <article
+        ref={ref as React.Ref<HTMLElement>}
+        className={className}
+        style={{ ...cardStyle, cursor: 'default' }}
+        {...handlers}
+      >
+        {inner}
+      </article>
+    )
+  }
+
   return (
     <a
       ref={ref as React.Ref<HTMLAnchorElement>}
@@ -302,7 +379,8 @@ const ProjectCard = ({ card, accent }: { card: WorkCard; accent: string }) => {
 
 export const Works = () => {
   const accent = ACCENT
-  const cards = buildCards()
+  const { applications, catalog, setCatalog, error } = useApplicationCatalog(apps)
+  const cards = buildCards(applications)
 
   return (
     <section id="works" className="section section-tall" data-screen-label="02 Works">
@@ -310,10 +388,21 @@ export const Works = () => {
 
       <BigNumber
         n="02"
-        kicker="Selected works · 2021—2026"
+        kicker={
+          <EditableText
+            contentKey="works.kicker"
+            label="Works 상단 문구"
+            defaultValue="Selected works · 2021—2026"
+          />
+        }
         label={
           <>
-            만들어 온 작은 도구들<span style={{ color: 'var(--accent)' }}>.</span>
+            <EditableText
+              contentKey="works.heading"
+              label="Works 제목"
+              defaultValue="만들어 온 작은 도구들"
+            />
+            <span style={{ color: 'var(--accent)' }}>.</span>
           </>
         }
       />
@@ -342,8 +431,12 @@ export const Works = () => {
               textWrap: 'pretty',
             }}
           >
-            업무 외 시간에 천천히 만들어 온 웹앱들. 하나의 문제를 정확히 푸는, 가볍게 열리고 빠르게 닫히는 도구를
-            지향합니다.
+            <EditableText
+              contentKey="works.introduction"
+              label="Works 소개"
+              defaultValue="업무 외 시간에 천천히 만들어 온 웹앱들. 하나의 문제를 정확히 푸는, 가볍게 열리고 빠르게 닫히는 도구를 지향합니다."
+              multiline
+            />
           </p>
         </Reveal>
 
@@ -359,14 +452,19 @@ export const Works = () => {
               lineHeight: 1.8,
             }}
           >
-            {String(cards.length).padStart(2, '0')} works
+            {String(cards.length).padStart(2, '0')}{' '}
+            <EditableText contentKey="works.countLabel" label="작업 개수 단위" defaultValue="works" />
             <br />
-            <span style={{ color: 'var(--ink)' }}>2021 — 2026</span>
+            <span style={{ color: 'var(--ink)' }}>
+              <EditableText contentKey="works.period" label="Works 기간" defaultValue="2021 — 2026" />
+            </span>
           </div>
         </Reveal>
       </div>
 
       {/* Grid */}
+      {catalog && <AddApplication catalog={catalog} onSave={setCatalog} />}
+      {error && <p role="status">추가 앱 목록을 불러오지 못했습니다. 새로고침해 주세요.</p>}
       <div
         className="cards-grid"
         style={{

@@ -75,7 +75,7 @@ export const BigNumber = ({
 }: {
   n: string
   label: ReactNode
-  kicker: string
+  kicker: ReactNode
 }) => (
   <div
     className="big-number"

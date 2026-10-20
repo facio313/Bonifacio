@@ -42,15 +42,17 @@ access_control:
     - domain:
         - bonifacio.work
         - www.bonifacio.work
-      resources: &blog-author-resources
-        - '^/blog/api/author(?:[/?].*)?$'
-      subject: user:cks
+      resources:
+        - '^/sso/user(?:[/?].*)?$'
+      subject: group:user
       policy: one_factor
     - domain:
         - bonifacio.work
         - www.bonifacio.work
-      resources: *blog-author-resources
-      policy: deny
+      resources:
+        - '^/sso/admin/api/editor-access(?:\?.*)?$'
+      subject: group:user
+      policy: one_factor
     - domain:
         - bonifacio.work
         - www.bonifacio.work
@@ -67,20 +69,19 @@ access_control:
     - domain:
         - bonifacio.work
         - www.bonifacio.work
-      resources:
-        - '^/monitor(?:[/?].*)?$'
-      subject: group:developer
+      resources: &blog-author-resources
+        - '^/blog/api/author(?:[/?].*)?$'
+      subject: user:cks
       policy: one_factor
     - domain:
         - bonifacio.work
         - www.bonifacio.work
-      resources:
-        - '^/monitor(?:[/?].*)?$'
+      resources: *blog-author-resources
       policy: deny
     - domain:
         - bonifacio.work
         - www.bonifacio.work
-      resources: &user-protected-resources
+      resources: &protected-app-resources
         - '^/(?:\?.*)?$'
         - '^/index\.html(?:\?.*)?$'
         - '^/assets(?:[/?].*)?$'
@@ -88,16 +89,91 @@ access_control:
         - '^/vue(?:[/?].*)?$'
         - '^/dukkeobi(?:[/?].*)?$'
         - '^/ddit-finalproject(?:[/?].*)?$'
+        - '^/monitor(?:[/?].*)?$'
         - '^/pilgrimage(?:[/?].*)?$'
         - '^/api(?:[/?].*)?$'
         - '^/multtara(?:[/?].*)?$'
         - '^/feelmyrythm(?:[/?].*)?$'
+        - '^/garak(?:[/?].*)?$'
+      subject: group:chief-admin
+      policy: one_factor
+    - domain:
+        - bonifacio.work
+        - www.bonifacio.work
+      resources:
+        - '^/(?:\?.*)?$'
+        - '^/index\.html(?:\?.*)?$'
+        - '^/assets(?:[/?].*)?$'
       subject: group:user
       policy: one_factor
     - domain:
         - bonifacio.work
         - www.bonifacio.work
-      resources: *user-protected-resources
+      resources:
+        - '^/react(?:[/?].*)?$'
+      subject: group:access-react
+      policy: one_factor
+    - domain:
+        - bonifacio.work
+        - www.bonifacio.work
+      resources:
+        - '^/vue(?:[/?].*)?$'
+      subject: group:access-vue
+      policy: one_factor
+    - domain:
+        - bonifacio.work
+        - www.bonifacio.work
+      resources:
+        - '^/dukkeobi(?:[/?].*)?$'
+      subject: group:access-dukkeobi
+      policy: one_factor
+    - domain:
+        - bonifacio.work
+        - www.bonifacio.work
+      resources:
+        - '^/ddit-finalproject(?:[/?].*)?$'
+      subject: group:access-ddit-finalproject
+      policy: one_factor
+    - domain:
+        - bonifacio.work
+        - www.bonifacio.work
+      resources:
+        - '^/monitor(?:[/?].*)?$'
+      subject: group:access-monitor
+      policy: one_factor
+    - domain:
+        - bonifacio.work
+        - www.bonifacio.work
+      resources:
+        - '^/pilgrimage(?:[/?].*)?$'
+        - '^/api(?:[/?].*)?$'
+      subject: group:access-pilgrimage
+      policy: one_factor
+    - domain:
+        - bonifacio.work
+        - www.bonifacio.work
+      resources:
+        - '^/multtara(?:[/?].*)?$'
+      subject: group:access-multtara
+      policy: one_factor
+    - domain:
+        - bonifacio.work
+        - www.bonifacio.work
+      resources:
+        - '^/feelmyrythm(?:[/?].*)?$'
+      subject: group:access-feelmyrythm
+      policy: one_factor
+    - domain:
+        - bonifacio.work
+        - www.bonifacio.work
+      resources:
+        - '^/garak(?:[/?].*)?$'
+      subject: group:access-garak
+      policy: one_factor
+    - domain:
+        - bonifacio.work
+        - www.bonifacio.work
+      resources: *protected-app-resources
       policy: deny
     - domain:
         - bonifacio.work
@@ -129,9 +205,9 @@ regulation:
 password_policy:
   standard:
     enabled: true
-    min_length: 14
+    min_length: 12
     max_length: 128
-    require_uppercase: true
+    require_uppercase: false
     require_lowercase: true
     require_number: true
     require_special: true

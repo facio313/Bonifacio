@@ -5,6 +5,7 @@ import { About } from './components/sections/About'
 import { Works } from './components/sections/Works'
 import { Blog } from './components/sections/Blog'
 import { Contact } from './components/sections/Contact'
+import { ContentEditorToolbar } from './components/ContentEditor'
 
 export default function App() {
   // Hide the loading splash shortly after mount.
@@ -15,6 +16,7 @@ export default function App() {
 
   return (
     <>
+      <ContentEditorToolbar />
       <DotNav />
       <Profile />
       <About />
