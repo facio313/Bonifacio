@@ -21,7 +21,7 @@ env:
 
 jobs:
   build-and-deploy:
-    name: Build ARM64 image and deploy
+    name: Validate and publish main
     runs-on: ubuntu-24.04-arm
     # The restricted host may wait up to 20 minutes for the fleet-wide deploy
     # lock, then replaces and verifies the unified SSO plus landing services.
@@ -82,6 +82,7 @@ jobs:
           unset hash_output
 
       - name: Sign in to GitHub Container Registry
+        if: github.ref_name == 'main'
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
@@ -89,9 +90,11 @@ jobs:
           password: ${{ github.token }}
 
       - name: Set up Docker Buildx
+        if: github.ref_name == 'main'
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Build and publish ARM64 image
+        if: github.ref_name == 'main'
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .

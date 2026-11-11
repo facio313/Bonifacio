@@ -24,5 +24,13 @@
 - The Bonifacio Actions timeout must cover the host's 20-minute fleet-wide deployment-lock wait plus both image cutovers and rollback verification; keep it at 60 minutes unless the workflow is split into separate publish and deploy jobs.
 - Dynamic applications must bind their native user/session to the immutable central `Remote-User` subject and compare it on every authenticated request. Trusted identity headers alone are insufficient: each edge-to-origin path must also carry its own non-public shared secret that the application verifies.
 - FeelMyRythm's protected `/feelmyrythm/api/` location must preserve application-origin `401` responses while the edge `auth_request` still redirects an unauthenticated browser to `/sso/`. Keep that API prefix more specific than the general app location and do not enable upstream error interception there, or a stale bearer token becomes an SSO redirect loop.
-- Authentication mode is branch-bound across the portfolio: `main` and `dev` must use central SSO, while every other branch is local development mode. `scripts/portfolio-auth-mode.sh` is the canonical resolver, and explicit branch/mode mismatches must fail closed during direct startup, Compose validation, image build, and container startup.
+- Authentication mode is branch-bound across the portfolio: `main` must use central SSO, `dev` uses local development mode, and all other branches are rejected. `scripts/portfolio-auth-mode.sh` is the canonical resolver, and explicit branch/mode mismatches must fail closed during direct startup, Compose validation, image build, and container startup.
 - Production applications must not retain an independent credential, password, login-session, or account-administration system. A dynamic application may keep only the minimum central-subject projection needed to own domain records; that projection is not an identity authority and must never contain a usable password.
+
+## Main/dev workflow (2026-11-12)
+
+- Active branches are `main` for production and `dev` for development. Tool and feature branches are retired.
+- Before changing code, fetch remote `main`, inspect local changes, and integrate that baseline into `dev` without discarding work.
+- All implementation and local application execution use `dev`. The canonical resolver enforces `main=sso`, `dev=local`, and rejects any other branch or conflicting explicit mode.
+- CI validates both branches. Production image publishing and server deployment accept only reviewed `main` commits; `dev` never triggers a production deployment.
+- Preserve unique commits and dirty, untracked, and ignored files before retiring old worktrees. Archived worktrees are not development run targets.

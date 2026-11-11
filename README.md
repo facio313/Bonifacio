@@ -23,8 +23,9 @@ through `scripts/portfolio-auth-mode.sh`:
 
 | Branch | Authentication mode |
 | --- | --- |
-| `main`, `dev` | `sso` |
-| every other branch | `local` |
+| `main` | `sso` |
+| `dev` | `local` |
+| every other branch | rejected |
 
 Branch resolution uses an explicit `PORTFOLIO_BRANCH`, then
 `GITHUB_REF_NAME`, then the current Git branch. An explicitly supplied
@@ -34,7 +35,7 @@ the resolved values as defaults and validates them again at its entrypoint, so
 the existing production Compose deployment does not need a new secret or host
 setting.
 
-The landing page is static: `local` means that a feature-branch Vite server can
+The landing page is static: `local` means that the dev-branch Vite server can
 be opened directly, while `sso` keeps the production authorization decision at
 the Nginx/Authelia edge. It does not add a client-side SSO bypass.
 
@@ -66,3 +67,7 @@ docker build \
   --build-arg PORTFOLIO_AUTH_MODE=sso \
   --tag bonifacio:main .
 ```
+
+## Development workflow
+
+Keep only `main` (production) and `dev` (development). Fetch the latest remote `main` and integrate it into `dev` before implementation. Run the local app and preview only from `dev`. CI validates both branches, but registry publishing and the restricted server deployment step run only on `main`. Preserve uncommitted work and unique history before retiring old tool worktrees.
